@@ -34,11 +34,11 @@ def load_and_process_data(url):
 
   df.columns = df.columns.str.strip()
 
-  # Hafta sütununu temizle
+  # Hafta sütununu kümüle rapordan tamamen çıkarıyoruz
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
 
-  # Doğru sütun eşleştirmeleri (Google Sheets başlıklarına göre)
+  # Google Sheets sütun eşleştirmeleri
   stok_col = (
       "Stok"
       if "Stok" in df.columns
@@ -55,7 +55,6 @@ def load_and_process_data(url):
       else ("SMM" if "SMM" in df.columns else None)
   )
 
-  # İndirimli Fiyat sütun adı görselde kesilmiş ('İndirimli Fiy...') olduğu için dinamik buluyoruz
   fiyat_col = None
   for col in df.columns:
     if "İndirimli" in col or "PSF" in col or "Mevcut" in col:
@@ -77,9 +76,24 @@ def load_and_process_data(url):
   )
 
   if id_col and id_col in df.columns:
-    agg_rules = {"Stok_num": "last", "Satis_num": "sum", "Maliyet_num": "first", "Fiyat_num": "first"}
+    agg_rules = {
+        "Stok_num": "last",
+        "Satis_num": "sum",
+        "Maliyet_num": "first",
+        "Fiyat_num": "first",
+    }
     for col in df.columns:
-      if col not in [id_col, "Stok_num", "Satis_num", "Maliyet_num", "Fiyat_num", stok_col, satis_col, maliyet_col, fiyat_col]:
+      if col not in [
+          id_col,
+          "Stok_num",
+          "Satis_num",
+          "Maliyet_num",
+          "Fiyat_num",
+          stok_col,
+          satis_col,
+          maliyet_col,
+          fiyat_col,
+      ]:
         agg_rules[col] = "first"
 
     df_grouped = df.groupby(id_col, as_index=False).agg(agg_rules)
@@ -93,10 +107,12 @@ def load_and_process_data(url):
   df_grouped["Satış Adeti"] = df_grouped["Satis_num"]
   df_grouped["Maliyet"] = df_grouped["Maliyet_num"]
   df_grouped["İndirimli Fiyat"] = df_grouped["Fiyat_num"]
-  
-  df_grouped = df_grouped.drop(columns=["Stok_num", "Satis_num", "Maliyet_num", "Fiyat_num"], errors="ignore")
 
-  # Metrik Hesaplamaları
+  df_grouped = df_grouped.drop(
+      columns=["Stok_num", "Satis_num", "Maliyet_num", "Fiyat_num"],
+      errors="ignore",
+  )
+
   stock_qty = df_grouped["Stok"]
   total_sales = df_grouped["Satış Adeti"]
   cost = df_grouped["Maliyet"]
