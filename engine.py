@@ -1,99 +1,115 @@
-import io
+import numpy as np
 import pandas as pd
-import streamlit as st
-from engine import calculate_smart_pricing, clean_numeric
 
-st.set_page_config(page_title="Smart Pricing Engine", layout="wide")
 
-st.title("Akıllı Fiyatlandırma ve Karar Destek Paneli")
+def clean_numeric(series):
+  """Series bazlı hızlı vektörel sayı temizleme"""
+  if isinstance(series, (int, float)):
+    return float(series)
+  if not isinstance(series, pd.Series):
+    series = pd.Series([series])
 
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1VWZsQvYK7CyZQiogmgLiVovufr9gnwWboa3sBt17VMA/export?format=csv&gid=0"
+  cleaned = (
+      series.astype(str)
+      .str.strip()
+      .str.replace('.', '', regex=False)
+      .str.replace(',', '.', regex=False)
+  )
+  return pd.to_numeric(cleaned, errors='coerce').fillna(0.0)
 
-@st.cache_data(ttl=600)
-def load_data(url):
-    df = pd.read_csv(url)
-    # Sütun adlarındaki olası boşlukları temizle
-    df.columns = df.columns.str.strip()
-    return df
 
-try:
-    df = load_data(SHEET_URL)
-    st.success("Veriler başarıyla yüklendi!")
+def calculate_smart_pricing(df_grouped):
+  """Döngü (iterrows) kullanılmadan tamamen vektörel olarak hesaplama yapar."""
+  if isinstance(df_grouped, pd.Series):
+    df_grouped = pd.DataFrame([df_grouped])
 
-    if "Hafta" in df.columns:
-        df = df.drop(columns=["Hafta"])
+  df = df_grouped.copy()
 
-    # Sayısal alanları dönüştür
-    df["Stok_val"] = df["Stok"].apply(clean_numeric) if "Stok" in df.columns else 0
-    df["Satis_val"] = df["Satış Adeti"].apply(clean_numeric) if "Satış Adeti" in df.columns else 0
+  # Vektörel veri dönüşümleri
+  cost = clean_numeric(
+      df.get('Maliyet', df.get('Cost', pd.Series([0] * len(df))))
+  )
+  current_price = clean_numeric(
+      df.get(
+          'İndirimli Fiyat',
+          df.get(
+              'Mevcut Fiyat',
+              df.get('İlk Fiyat', pd.Series([0] * len(df))),
+          ),
+      )
+  )
+  stock_qty = clean_numeric(
+      df.get('Stok', df.get('Stok Adedi', pd.Series([0] * len(df))))
+  )
+  weekly_sales = clean_numeric(
+      df.get('Satış Adeti', df.get('Haftalık Satış', pd.Series([0] * len(df))))
+  )
 
-    # Güvenli ve hızlı kümüle gruplama
-    group_col = "Ürün Kodu" if "Ürün Kodu" in df.columns else "Ürün Adı"
-    
-    if group_col in df.columns:
-        df_grouped = df.groupby(group_col, as_index=False).agg({
-            "Stok_val": "last",
-            "Satis_val": "sum",
-            "Ürün Adı": "first" if "Ürün Adı" in df.columns else "first",
-            "Maliyet": "first" if "Maliyet" in df.columns else "first",
-            "İndirimli Fiyat": "first" if "İndirimli Fiyat" in df.columns else "first",
-            "İlk Fiyat": "first" if "İlk Fiyat" in df.columns else "first",
-            "Renk Açıklaması": "first" if "Renk Açıklaması" in df.columns else "first"
-        })
-        df_grouped["Stok"] = df_grouped["Stok_val"]
-        df_grouped["Satış Adeti"] = df_grouped["Satis_val"]
-    else:
-        df_grouped = df
+  min_allowable_price = cost * 1.20
 
-    # Fiyatlar
-    if "Maliyet" in df_grouped.columns:
-        df_grouped["Maliyet"] = df_grouped["Maliyet"].apply(clean_numeric)
-    if "İndirimli Fiyat" in df_grouped.columns:
-        df_grouped["İndirimli Fiyat"] = df_grouped["İndirimli Fiyat"].apply(clean_numeric)
+  # WOS hesaplama (sıfıra bölünme koruması ile)
+  wos = np.where(weekly_sales == 0, 99.0, stock_qty / weekly_sales)
 
-    # Sol Menü Filtre
-    st.sidebar.subheader("Filtreleme Paneli")
-    if group_col in df_grouped.columns:
-        unique_codes = df_grouped[group_col].dropna().unique().tolist()
-        selected_code = st.sidebar.selectbox("Ürün Kodu Seçin", ["Tümü"] + unique_codes)
-        
-        if selected_code != "Tümü":
-            df_filtered = df_grouped[df_grouped[group_col] == selected_code]
-        else:
-            df_filtered = df_grouped
-    else:
-        df_filtered = df_grouped
+  # Varsayılan değerler
+  action = np.选择 = np.where(
+      (wos < 2) & (weekly_sales > 2),
+      'Fiyat Artır / Koru',
+      'Fiyat Koru (Optimum Seviye)',
+  )
+  suggested_price = current_price.copy()
+  urgency = np.where(
+      (wos < 2) & (weekly_sales > 2), 'Düşük', 'Normal'
+  )
 
-    # Motor
-    results_df = calculate_smart_pricing(df_filtered)
-    results_df = results_df.reset_index(drop=True)
-    df_filtered = df_filtered.reset_index(drop=True)
-    
-    df_result = pd.concat([df_filtered, results_df], axis=1)
+  # Kademe mantığı (Vektörel koşullar)
+  mask_tier1 = (wos > 10) | ((weekly_sales == 0) & (stock_qty > 5))
+  mask_tier2 = wos > 15
 
-    # Dashboard
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Toplam Çeşit", len(df_result))
-    col2.metric("Toplam Stok", int(df_result["Stok"].sum()) if "Stok" in df_result.columns else 0)
-    col3.metric("Toplam Satış", int(df_result["Satış Adeti"].sum()) if "Satış Adeti" in df_result.columns else 0)
-    alarm_count = len(df_result[df_result["Aciliyet"].str.contains("Kırmızı Alarm", na=False)]) if "Aciliyet" in df_result.columns else 0
-    col4.metric("Kırmızı Alarm", alarm_count)
+  action = np.select(
+      [mask_tier2, mask_tier1, (wos < 2) & (weekly_sales > 2)],
+      [
+          'Tasfiye İndirimi (%30)',
+          '1. Kademe İndirim (%15)',
+          'Fiyat Artır / Koru',
+      ],
+      default='Fiyat Koru (Optimum Seviye)',
+  )
 
-    st.markdown("---")
-    st.subheader("Ürün Analiz ve Aksiyon Listesi")
-    st.dataframe(df_result, use_container_width=True)
+  urgency = np.select(
+      [mask_tier2, mask_tier1, (wos < 2) & (weekly_sales > 2)],
+      ['Yüksek', 'Orta', 'Düşük'],
+      default='Normal',
+  )
 
-    # Excel İndir
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_result.to_excel(writer, index=False, sheet_name="Aksiyon_Listesi")
-    
-    st.download_button(
-        label="📥 Tabloyu Excel Olarak İndir",
-        data=output.getvalue(),
-        file_name="akilli_fiyatlandirma.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+  suggested_price = np.select(
+      [mask_tier2, mask_tier1],
+      [current_price * 0.70, current_price * 0.85],
+      default=current_price,
+  )
 
-except Exception as e:
-    st.error(f"Hata oluştu: {e}")
+  # Stop-Loss (Taban Fiyat) Koruması
+  is_under_stoploss = suggested_price < min_allowable_price
+  suggested_price = np.where(
+      is_under_stoploss, min_allowable_price, suggested_price
+  )
+  urgency = np.where(is_under_stoploss, 'Kırmızı Alarm (Taban Fiyat)', urgency)
+
+  # İndirim yüzdesi
+  discount_rate = np.where(
+      current_price > 0,
+      np.round(
+          (1 - (suggested_price / current_price)) * 100, 2
+      ),
+      0.0,
+  )
+  discount_rate = np.maximum(0.0, discount_rate)
+
+  result_df = pd.DataFrame({
+      'WOS_Hafta': np.round(wos, 1),
+      'Aksiyon': action,
+      'Aciliyet': urgency,
+      'Onerilen_Fiyat': np.round(suggested_price, 2),
+      'Onerilen_Indirim_Yuzde': discount_rate,
+  }, index=df.index)
+
+  return result_df
