@@ -69,10 +69,10 @@ def load_and_process_data(url):
     elif col_clean in ["maliyet", "smm", "cost"] and not maliyet_col:
       maliyet_col = col
     elif (
-        "indirimli" in col_clean or "psf" in col_clean or "fiyat" in col_clean
+        "indirimli" in col_clean or "psf değeri" in col_clean
     ) and not fiyat_col:
       fiyat_col = col
-    elif "ilk fiyat" in col_clean or "liste fiyatı" in col_clean:
+    elif "ilk fiyat" in col_clean or "liste" in col_clean or col_clean == "fiyat":
       ilk_fiyat_col = col
 
   if not id_col:
@@ -98,12 +98,12 @@ def load_and_process_data(url):
         break
   if not fiyat_col:
     for col in df.columns:
-      if "fiyat" in col.lower() or "psf" in col.lower():
+      if "indirimli" in col.lower():
         fiyat_col = col
         break
   if not ilk_fiyat_col:
     for col in df.columns:
-      if "ilk" in col.lower():
+      if "ilk" in col.lower() or "fiyat" in col.lower():
         ilk_fiyat_col = col
         break
 
@@ -111,9 +111,7 @@ def load_and_process_data(url):
   df["Satis_num"] = clean_numeric(df[satis_col]) if satis_col else 0.0
   df["Maliyet_num"] = clean_numeric(df[maliyet_col]) if maliyet_col else 0.0
   df["Fiyat_num"] = clean_numeric(df[fiyat_col]) if fiyat_col else 0.0
-  df["Ilk_Fiyat_num"] = (
-      clean_numeric(df[ilk_fiyat_col]) if ilk_fiyat_col else df["Fiyat_num"]
-  )
+  df["Ilk_Fiyat_num"] = clean_numeric(df[ilk_fiyat_col]) if ilk_fiyat_col else df["Fiyat_num"]
 
   group_col = id_col if id_col else df.columns[0]
 
@@ -149,8 +147,7 @@ def load_and_process_data(url):
   df_grouped["Satış Adeti"] = df_grouped["Satis_num"]
   df_grouped["Maliyet"] = df_grouped["Maliyet_num"]
   df_grouped["İndirimli Fiyat"] = df_grouped["Fiyat_num"]
-  if ilk_fiyat_col:
-    df_grouped["İlk Fiyat"] = df_grouped["Ilk_Fiyat_num"]
+  df_grouped["İlk Fiyat"] = df_grouped["Ilk_Fiyat_num"]
 
   df_grouped = df_grouped.drop(
       columns=["Stok_num", "Satis_num", "Maliyet_num", "Fiyat_num", "Ilk_Fiyat_num"],
@@ -161,9 +158,7 @@ def load_and_process_data(url):
   total_sales = df_grouped["Satış Adeti"]
   cost = df_grouped["Maliyet"]
   current_price = df_grouped["İndirimli Fiyat"]
-  first_price = (
-      df_grouped["İlk Fiyat"] if "İlk Fiyat" in df_grouped.columns else current_price
-  )
+  first_price = df_grouped["İlk Fiyat"]
 
   active_weeks = 1.0
   weekly_sales_rate = total_sales / active_weeks
@@ -197,17 +192,17 @@ def load_and_process_data(url):
       default="Normal",
   )
 
-  # Fiyat Öneri Mantığı:
-  # - Tasfiye ve İndirimde: Mevcut fiyat üzerinden indirim
-  # - Fiyat Artır / Koru durumunda: İlk Fiyat üzerinden %10 yukarı yönlü esneme veya İlk Fiyatı baz al
-  base_price_for_increase = np.where(first_price > current_price, first_price, current_price * 1.10)
+  # Mantıklı Fiyat Önerisi:
+  # - Tasfiye ve İndirimde: Mevcut indirimli fiyat üzerinden düşüş
+  # - Fiyat Artır / Koru durumunda: Eğer İlk Fiyat mevcut fiyattan yüksekse İlk Fiyata çek, değilse mevcut fiyatı koru
+  target_increase_price = np.where(first_price > current_price, first_price, current_price)
 
   suggested_price = np.select(
       [mask_liquidation, mask_tier1_discount, mask_high_performer],
       [
           current_price * 0.70,
           current_price * 0.85,
-          base_price_for_increase,
+          target_increase_price,
       ],
       default=current_price,
   )
@@ -238,7 +233,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Veriler başarıyla yüklendi ve fiyatlandırma mantığı güncellendi!")
+  st.success("İlk Fiyat ve akıllı fiyatlandırma mantığı başarıyla entegre edildi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
