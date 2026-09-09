@@ -1,83 +1,119 @@
-import numpy as np
+import io
 import pandas as pd
+import streamlit as st
+from engine import calculate_smart_pricing, clean_numeric
 
-def clean_numeric(series):
-    if isinstance(series, (int, float)):
-        return float(series)
-    if not isinstance(series, pd.Series):
-        series = pd.Series([series])
-    
-    cleaned = (
-        series.astype(str)
-        .str.strip()
-        .str.replace('.', '', regex=False)
-        .str.replace(',', '.', regex=False)
-    )
-    return pd.to_numeric(cleaned, errors='coerce').fillna(0.0)
+st.set_page_config(page_title="Smart Pricing Engine", layout="wide")
 
-def calculate_smart_pricing(df):
-    cost = clean_numeric(df.get('Maliyet', df.get('SMM', df.get('Cost', pd.Series([0] * len(df))))))
-    current_price = clean_numeric(df.get('İndirimli Fiyat', df.get('PSF DEĞERİ', df.get('Mevcut Fiyat', df.get('İlk Fiyat', pd.Series([0] * len(df)))))))
-    stock_qty = clean_numeric(df.get('Stok', df.get('Stok Adedi', pd.Series([0] * len(df)))))
-    total_sales = clean_numeric(df.get('Satış Adeti', df.get('Satış adedi payı', pd.Series([0] * len(df)))))
+st.title("Akıllı Fiyatlandırma ve Karar Destek Paneli")
+
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1VWZsQvYK7CyZQiogmgLiVovufr9gnwWboa3sBt17VMA/export?format=csv&gid=0"
+
+@st.cache_data(ttl=3600)
+def load_and_aggregate_data(url):
+    df = pd.read_csv(url)
+    df.columns = df.columns.str.strip()
     
-    # Aktif Hafta ve Satış Hızı Hesabı
-    if 'İlk Giriş Haftası' in df.columns and 'Son Giriş Haftası' in df.columns:
-        first_week = clean_numeric(df['İlk Giriş Haftası'])
-        last_week = clean_numeric(df['Son Giriş Haftası'])
-        active_weeks = np.maximum(1.0, (last_week - first_week) + 1.0)
+    # Hafta sütununu kümüle raporda kirlilik yapmaması için çıkarıyoruz
+    if "Hafta" in df.columns:
+        df = df.drop(columns=["Hafta"])
+
+    if "Stok" in df.columns:
+        df["Stok_num"] = clean_numeric(df["Stok"])
     else:
-        active_weeks = 1.0
+        df["Stok_num"] = 0.0
 
-    weekly_sales_rate = total_sales / active_weeks
-    wos = np.where(weekly_sales_rate == 0, 99.0, stock_qty / weekly_sales_rate)
-    
-    # Envanter Maliyeti, Brüt Kâr ve GMROI Hesabı
-    inventory_cost = stock_qty * cost
-    realized_profit = clean_numeric(df.get('Satılan Net Kâr', (current_price - cost) * total_sales))
-    gmroi = np.where(inventory_cost > 0, realized_profit / inventory_cost, 0.0)
+    if "Satış Adeti" in df.columns:
+        df["Satis_num"] = clean_numeric(df["Satış Adeti"])
+    else:
+        df["Satis_num"] = 0.0
 
-    # Stop-Loss (Taban Fiyat) Sınırı
-    min_allowable_price = cost * 1.20
+    # Id bazlı kümüle gruplama
+    id_col = "Id" if "Id" in df.columns else ("ID" if "ID" in df.columns else ("id" if "id" in df.columns else None))
+
+    if id_col and id_col in df.columns:
+        agg_rules = {"Stok_num": "last", "Satis_num": "sum"}
+        for col in df.columns:
+            if col not in [id_col, "Stok_num", "Satis_num", "Stok", "Satış Adeti"]:
+                agg_rules[col] = "first"
+                
+        df_grouped = df.groupby(id_col, as_index=False).agg(agg_rules)
+        
+        # Kesin güvenlik önlemi: Çıktı seriye dönerse DataFrame'e çevir
+        if isinstance(df_grouped, pd.Series):
+            df_grouped = pd.DataFrame([df_grouped])
+            
+        df_grouped["Stok"] = df_grouped["Stok_num"]
+        df_grouped["Satış Adeti"] = df_grouped["Satis_num"]
+        df_grouped = df_grouped.drop(columns=["Stok_num", "Satis_num"], errors="ignore")
+    else:
+        df_grouped = df
+
+    if "Maliyet" in df_grouped.columns:
+        df_grouped["Maliyet"] = clean_numeric(df_grouped["Maliyet"])
+    if "İndirimli Fiyat" in df_grouped.columns:
+        df_grouped["İndirimli Fiyat"] = clean_numeric(df_grouped["İndirimli Fiyat"])
+        
+    return df_grouped
+
+try:
+    df_grouped = load_and_aggregate_data(SHEET_URL)
+    st.success("Veriler Id bazlı kümüle edildi ve başarıyla yüklendi!")
+
+    # Sol Menü Filtre Paneli
+    st.sidebar.subheader("Filtreleme Paneli")
+    id_col = "Id" if "Id" in df_grouped.columns else ("ID" if "ID" in df_grouped.columns else None)
+    filter_col = id_col if id_col else ("Ürün Kodu" if "Ürün Kodu" in df_grouped.columns else "Ürün Adı")
+
+    if filter_col and filter_col in df_grouped.columns:
+        unique_codes = df_grouped[filter_col].dropna().unique().tolist()
+        selected_code = st.sidebar.selectbox(f"{filter_col} Seçin", ["Tümü"] + [str(x) for x in unique_codes])
+        
+        if selected_code != "Tümü":
+            df_filtered = df_grouped[df_grouped[filter_col].astype(str) == str(selected_code)].copy()
+        else:
+            df_filtered = df_grouped.copy()
+    else:
+        df_filtered = df_grouped.copy()
+
+    df_filtered = df_filtered.reset_index(drop=True)
+
+    # Motoru çalıştır ve metrikleri sütun olarak ekle
+    metrics_df = calculate_smart_pricing(df_filtered)
     
-    # Karar Matrisi
-    mask_high_performer = (wos < 3) & (gmroi > 2.0)
-    mask_tier1_discount = (wos > 10) | (gmroi < 0.5) | ((weekly_sales_rate == 0) & (stock_qty > 5))
-    mask_liquidation = (wos > 15) & (gmroi < 0.2)
+    for col in metrics_df.columns:
+        df_filtered[col] = metrics_df[col].values
+
+    df_result = df_filtered
+
+    # Üst Dashboard Metrikleri
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Toplam Çeşit / Id", len(df_result))
+    col2.metric("Toplam Stok", int(df_result["Stok"].sum()) if "Stok" in df_result.columns else 0)
+    col3.metric("Toplam Satış", int(df_result["Satış Adeti"].sum()) if "Satış Adeti" in df_result.columns else 0)
+    alarm_count = len(df_result[df_result["Aciliyet Seviyesi"].str.contains("Kırmızı Alarm", na=False)]) if "Aciliyet Seviyesi" in df_result.columns else 0
+    col4.metric("Kırmızı Alarm", alarm_count)
+
+    st.markdown("---")
+    st.subheader("Ürün Bazlı Kümüle Fiyat ve Karar Analizi")
     
-    action = np.select(
-        [mask_liquidation, mask_tier1_discount, mask_high_performer],
-        ["Tasfiye İndirimi (%30)", "1. Kademe İndirim (%15)", "Fiyat Artır / Koru"],
-        default="Fiyatı Koru (Optimum)"
+    st.dataframe(df_result, use_container_width=True)
+
+    @st.cache_data
+    def convert_df_to_excel(df):
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Aksiyon_Listesi")
+        return output.getvalue()
+
+    excel_data = convert_df_to_excel(df_result)
+
+    st.download_button(
+        label="📥 Net Raporu Excel Olarak İndir",
+        data=excel_data,
+        file_name="akilli_fiyatlandirma_kumule.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-    
-    urgency = np.select(
-        [mask_liquidation, mask_tier1_discount, mask_high_performer],
-        ["Yüksek", "Orta", "Düşük"],
-        default="Normal"
-    )
-    
-    suggested_price = np.select(
-        [mask_liquidation, mask_tier1_discount],
-        [current_price * 0.70, current_price * 0.85],
-        default=current_price
-    )
-    
-    is_under_stoploss = suggested_price < min_allowable_price
-    suggested_price = np.where(is_under_stoploss, min_allowable_price, suggested_price)
-    urgency = np.where(is_under_stoploss, "Kırmızı Alarm (Taban Fiyat)", urgency)
-    
-    discount_rate = np.where(current_price > 0, np.round((1 - (suggested_price / current_price)) * 100, 2), 0.0)
-    discount_rate = np.maximum(0.0, discount_rate)
-    
-    return pd.DataFrame({
-        "Aktif Hafta": np.round(active_weeks, 1),
-        "Haftalık Satış Hızı": np.round(weekly_sales_rate, 2),
-        "Stok Ömrü (WOS)": np.round(wos, 1),
-        "Brüt Kâr (TL)": np.round(realized_profit, 2),
-        "GMROI Verimliliği": np.round(gmroi, 2),
-        "Önerilen Aksiyon": action,
-        "Aciliyet Seviyesi": urgency,
-        "Önerilen Yeni Fiyat (TL)": np.round(suggested_price, 2),
-        "Önerilen İndirim (%)": discount_rate
-    }, index=df.index)
+
+except Exception as e:
+    st.error(f"Hata oluştu: {e}")
