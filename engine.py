@@ -14,7 +14,12 @@ def clean_numeric(val):
 def calculate_smart_pricing(df_grouped):
     """
     Ürün bazında birleştirilmiş veriler üzerinden akıllı fiyatlandırma çalıştırır.
+    DataFrame veya tekli satır (Series) durumlarını güvenle yönetir.
     """
+    # Tekli satır/filtrelenmiş veri Series gelirse DataFrame'e çevir
+    if isinstance(df_grouped, pd.Series):
+        df_grouped = pd.DataFrame([df_grouped])
+        
     results = []
     
     for _, row in df_grouped.iterrows():
