@@ -26,6 +26,7 @@ def calculate_smart_pricing(df_grouped):
     stock_qty = clean_numeric(df.get('Stok', df.get('Stok Adedi', pd.Series([0] * len(df)))))
     total_sales = clean_numeric(df.get('Satış Adeti', df.get('Satış adedi payı', pd.Series([0] * len(df)))))
     
+    # Aktif hafta hesaplama
     if 'İlk Giriş Haftası' in df.columns and 'Son Giriş Haftası' in df.columns:
         first_week = clean_numeric(df['İlk Giriş Haftası'])
         last_week = clean_numeric(df['Son Giriş Haftası'])
@@ -48,8 +49,8 @@ def calculate_smart_pricing(df_grouped):
     
     action = np.select(
         [mask_liquidation, mask_tier1_discount, mask_high_performer],
-        ["Tasfiye İndirimi (%30)", "1. Kademe İndirim (%15)", "Fiyat Artır / Koru (Yüksek GMROI)"],
-        default="Fiyat Koru (Optimum Seviye)"
+        ["Tasfiye İndirimi (%30)", "1. Kademe İndirim (%15)", "Fiyat Artır / Koru"],
+        default="Fiyatı Koru (Optimum)"
     )
     
     urgency = np.select(
@@ -71,15 +72,15 @@ def calculate_smart_pricing(df_grouped):
     discount_rate = np.where(current_price > 0, np.round((1 - (suggested_price / current_price)) * 100, 2), 0.0)
     discount_rate = np.maximum(0.0, discount_rate)
     
+    # Sütun isimleri net, Türkçe ve anlaşılır yapıldı
     result_df = pd.DataFrame({
-        "Aktif_Hafta_Sayisi": np.round(active_weeks, 1),
-        "Haftalik_Satis_Hizi": np.round(weekly_sales_rate, 2),
-        "WOS_Hafta": np.round(wos, 1),
-        "GMROI": np.round(gmroi, 2),
-        "Aksiyon": action,
-        "Aciliyet": urgency,
-        "Onerilen_Fiyat": np.round(suggested_price, 2),
-        "Onerilen_Indirim_Yuzde": discount_rate
-    }, index=df.index)
+        "Haftalık Satış Hızı": np.round(weekly_sales_rate, 2),
+        "Stok Ömrü (WOS)": np.round(wos, 1),
+        "GMROI Verimliliği": np.round(gmroi, 2),
+        "Önerilen Aksiyon": action,
+        "Aciliyet Seviyesi": urgency,
+        "Önerilen Yeni Fiyat (TL)": np.round(suggested_price, 2),
+        "Önerilen İndirim (%)": discount_rate
+    })
     
     return result_df
