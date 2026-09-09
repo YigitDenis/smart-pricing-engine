@@ -1,110 +1,85 @@
-import io
+import numpy as np
 import pandas as pd
-import streamlit as st
-from engine import calculate_smart_pricing, clean_numeric
 
-st.set_page_config(page_title="Smart Pricing Engine", layout="wide")
-
-st.title("Akıllı Fiyatlandırma ve Karar Destek Paneli")
-
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1VWZsQvYK7CyZQiogmgLiVovufr9gnwWboa3sBt17VMA/export?format=csv&gid=0"
-
-@st.cache_data(ttl=3600)
-def load_and_aggregate_data(url):
-    df = pd.read_csv(url)
-    df.columns = df.columns.str.strip()
+def clean_numeric(series):
+    if isinstance(series, (int, float)):
+        return float(series)
+    if not isinstance(series, pd.Series):
+        series = pd.Series([series])
     
-    if "Hafta" in df.columns:
-        df = df.drop(columns=["Hafta"])
-
-    if "Stok" in df.columns:
-        df["Stok_num"] = clean_numeric(df["Stok"])
-    else:
-        df["Stok_num"] = 0.0
-
-    if "Satış Adeti" in df.columns:
-        df["Satis_num"] = clean_numeric(df["Satış Adeti"])
-    else:
-        df["Satis_num"] = 0.0
-
-    group_col = "Ürün Kodu" if "Ürün Kodu" in df.columns else "Ürün Adı"
-
-    if group_col in df.columns:
-        agg_rules = {"Stok_num": "last", "Satis_num": "sum"}
-        for col in ["Ürün Adı", "Maliyet", "İndirimli Fiyat", "İlk Fiyat", "Renk Açıklaması", "ANAKATEGORİ Açıklama", "GMROI", "SMM", "PSF DEĞERİ"]:
-            if col in df.columns:
-                agg_rules[col] = "first"
-                
-        df_grouped = df.groupby(group_col, as_index=False).agg(agg_rules)
-        df_grouped["Stok"] = df_grouped["Stok_num"]
-        df_grouped["Satış Adeti"] = df_grouped["Satis_num"]
-    else:
-        df_grouped = df
-
-    if "Maliyet" in df_grouped.columns:
-        df_grouped["Maliyet"] = clean_numeric(df_grouped["Maliyet"])
-    if "İndirimli Fiyat" in df_grouped.columns:
-        df_grouped["İndirimli Fiyat"] = clean_numeric(df_grouped["İndirimli Fiyat"])
-        
-    return df_grouped
-
-try:
-    df_grouped = load_and_aggregate_data(SHEET_URL)
-    st.success("Veriler başarıyla yüklendi!")
-
-    # Sol Menü Filtre
-    st.sidebar.subheader("Filtreleme Paneli")
-    group_col = "Ürün Kodu" if "Ürün Kodu" in df_grouped.columns else "Ürün Adı"
-
-    if group_col in df_grouped.columns:
-        unique_codes = df_grouped[group_col].dropna().unique().tolist()
-        selected_code = st.sidebar.selectbox("Ürün Kodu Seçin", ["Tümü"] + unique_codes)
-        
-        if selected_code != "Tümü":
-            df_filtered = df_grouped[df_grouped[group_col] == selected_code]
-        else:
-            df_filtered = df_grouped
-    else:
-        df_filtered = df_grouped
-
-    # Motoru çalıştır ve sonuçları bağımsız sütunlar olarak al
-    results_df = calculate_smart_pricing(df_filtered)
-    
-    # İndeksleri sıfırlayıp yan yana (kolon kolon) birleştir
-    df_filtered = df_filtered.reset_index(drop=True)
-    results_df = results_df.reset_index(drop=True)
-    
-    df_result = pd.concat([df_filtered, results_df], axis=1)
-
-    # Dashboard Metrikleri
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Toplam Çeşit", len(df_result))
-    col2.metric("Toplam Stok", int(df_result["Stok"].sum()) if "Stok" in df_result.columns else 0)
-    col3.metric("Toplam Satış", int(df_result["Satış Adeti"].sum()) if "Satış Adeti" in df_result.columns else 0)
-    alarm_count = len(df_result[df_result["Aciliyet"].str.contains("Kırmızı Alarm", na=False)]) if "Aciliyet" in df_result.columns else 0
-    col4.metric("Kırmızı Alarm", alarm_count)
-
-    st.markdown("---")
-    st.subheader("Ürün Analiz ve Sütun Bazlı Karar Matrisi")
-    
-    # Tabloyu tam ekran ve sütun sütun göster
-    st.dataframe(df_result, use_container_width=True)
-
-    @st.cache_data
-    def convert_df_to_excel(df):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Aksiyon_Listesi")
-        return output.getvalue()
-
-    excel_data = convert_df_to_excel(df_result)
-
-    st.download_button(
-        label="📥 Sütun Bazlı Tabloyu Excel Olarak İndir",
-        data=excel_data,
-        file_name="akilli_fiyatlandirma_detayli.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    cleaned = (
+        series.astype(str)
+        .str.strip()
+        .str.replace('.', '', regex=False)
+        .str.replace(',', '.', regex=False)
     )
+    return pd.to_numeric(cleaned, errors='coerce').fillna(0.0)
 
-except Exception as e:
-    st.error(f"Hata oluştu: {e}")
+def calculate_smart_pricing(df_grouped):
+    if isinstance(df_grouped, pd.Series):
+        df_grouped = pd.DataFrame([df_grouped])
+        
+    df = df_grouped.copy()
+    
+    cost = clean_numeric(df.get('Maliyet', df.get('SMM', df.get('Cost', pd.Series([0] * len(df))))))
+    current_price = clean_numeric(df.get('İndirimli Fiyat', df.get('PSF DEĞERİ', df.get('Mevcut Fiyat', df.get('İlk Fiyat', pd.Series([0] * len(df)))))))
+    stock_qty = clean_numeric(df.get('Stok', df.get('Stok Adedi', pd.Series([0] * len(df)))))
+    total_sales = clean_numeric(df.get('Satış Adeti', df.get('Satış adedi payı', pd.Series([0] * len(df)))))
+    
+    if 'İlk Giriş Haftası' in df.columns and 'Son Giriş Haftası' in df.columns:
+        first_week = clean_numeric(df['İlk Giriş Haftası'])
+        last_week = clean_numeric(df['Son Giriş Haftası'])
+        active_weeks = np.maximum(1.0, (last_week - first_week) + 1.0)
+    else:
+        active_weeks = 1.0
+
+    weekly_sales_rate = total_sales / active_weeks
+    wos = np.where(weekly_sales_rate == 0, 99.0, stock_qty / weekly_sales_rate)
+    
+    inventory_cost = stock_qty * cost
+    realized_profit = clean_numeric(df.get('Satılan Net Kâr', (current_price - cost) * total_sales))
+    gmroi = np.where(inventory_cost > 0, realized_profit / inventory_cost, 0.0)
+
+    min_allowable_price = cost * 1.20
+    
+    mask_high_performer = (wos < 3) & (gmroi > 2.0)
+    mask_tier1_discount = (wos > 10) | (gmroi < 0.5) | ((weekly_sales_rate == 0) & (stock_qty > 5))
+    mask_liquidation = (wos > 15) & (gmroi < 0.2)
+    
+    action = np.select(
+        [mask_liquidation, mask_tier1_discount, mask_high_performer],
+        ["Tasfiye İndirimi (%30)", "1. Kademe İndirim (%15)", "Fiyat Artır / Koru (Yüksek GMROI)"],
+        default="Fiyat Koru (Optimum Seviye)"
+    )
+    
+    urgency = np.select(
+        [mask_liquidation, mask_tier1_discount, mask_high_performer],
+        ["Yüksek", "Orta", "Düşük"],
+        default="Normal"
+    )
+    
+    suggested_price = np.select(
+        [mask_liquidation, mask_tier1_discount],
+        [current_price * 0.70, current_price * 0.85],
+        default=current_price
+    )
+    
+    is_under_stoploss = suggested_price < min_allowable_price
+    suggested_price = np.where(is_under_stoploss, min_allowable_price, suggested_price)
+    urgency = np.where(is_under_stoploss, "Kırmızı Alarm (Taban Fiyat)", urgency)
+    
+    discount_rate = np.where(current_price > 0, np.round((1 - (suggested_price / current_price)) * 100, 2), 0.0)
+    discount_rate = np.maximum(0.0, discount_rate)
+    
+    result_df = pd.DataFrame({
+        "Aktif_Hafta_Sayisi": np.round(active_weeks, 1),
+        "Haftalik_Satis_Hizi": np.round(weekly_sales_rate, 2),
+        "WOS_Hafta": np.round(wos, 1),
+        "GMROI": np.round(gmroi, 2),
+        "Aksiyon": action,
+        "Aciliyet": urgency,
+        "Onerilen_Fiyat": np.round(suggested_price, 2),
+        "Onerilen_Indirim_Yuzde": discount_rate
+    }, index=df.index)
+    
+    return result_df
