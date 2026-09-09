@@ -26,7 +26,6 @@ def calculate_smart_pricing(df_grouped):
     stock_qty = clean_numeric(df.get('Stok', df.get('Stok Adedi', pd.Series([0] * len(df)))))
     total_sales = clean_numeric(df.get('Satış Adeti', df.get('Satış adedi payı', pd.Series([0] * len(df)))))
     
-    # Aktif hafta hesaplama
     if 'İlk Giriş Haftası' in df.columns and 'Son Giriş Haftası' in df.columns:
         first_week = clean_numeric(df['İlk Giriş Haftası'])
         last_week = clean_numeric(df['Son Giriş Haftası'])
@@ -72,7 +71,6 @@ def calculate_smart_pricing(df_grouped):
     discount_rate = np.where(current_price > 0, np.round((1 - (suggested_price / current_price)) * 100, 2), 0.0)
     discount_rate = np.maximum(0.0, discount_rate)
     
-    # Sütun isimleri net, Türkçe ve anlaşılır yapıldı
     result_df = pd.DataFrame({
         "Haftalık Satış Hızı": np.round(weekly_sales_rate, 2),
         "Stok Ömrü (WOS)": np.round(wos, 1),
