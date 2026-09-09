@@ -12,47 +12,43 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1VWZsQvYK7CyZQiogmgLiVovufr9
 
 def format_tl(val):
   try:
-    val = float(val)
+    if pd.isna(val) or str(val).strip() == "":
+      return "0,00 TL"
+    # Eğer değer zaten string içinde TL geçiyorsa olduğu gibi bırak
+    val_str = str(val).upper()
+    if "TL" in val_str or "TRY" in val_str:
+      cleaned_str = (
+          val_str.replace("TRY", "")
+          .replace("TL", "")
+          .strip()
+          .replace(".", "")
+          .replace(",", ".")
+      )
+      f_val = float(cleaned_str)
+    else:
+      f_val = float(val)
     return (
-        f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        f"{f_val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         + " TL"
     )
   except:
-    return "0,00 TL"
+    return str(val) if pd.notna(val) else "0,00 TL"
 
 
 def format_percentage(val):
   try:
-    val = float(val)
-    if 0 < val <= 1:
-      val = val * 100
+    if pd.isna(val) or str(val).strip() == "":
+      return "%0,00"
+    val_str = str(val).replace("%", "").strip().replace(",", ".")
+    f_val = float(val_str)
+    if 0 <= f_val <= 1:
+      f_val = f_val * 100
     return (
         "%"
-        + f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        + f"{f_val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     )
   except:
-    return "%0,00"
-
-
-def clean_numeric(series):
-  if series is None:
-    return 0.0
-  if isinstance(series, (int, float)):
-    return float(series)
-  if not isinstance(series, pd.Series):
-    series = pd.Series([series])
-
-  cleaned = (
-      series.astype(str)
-      .str.upper()
-      .str.replace("TRY", "", regex=False)
-      .str.replace("TL", "", regex=False)
-      .str.strip()
-      .str.replace("\xa0", "", regex=False)
-      .str.replace(".", "", regex=False)
-      .str.replace(",", ".", regex=False)
-  )
-  return pd.to_numeric(cleaned, errors="coerce").fillna(0.0)
+    return str(val) if pd.notna(val) else "%0,00"
 
 
 def sanitize_name(name):
@@ -95,6 +91,7 @@ def load_and_process_data(url):
   original_columns = list(df.columns)
   cols_list = list(df.columns)
 
+  # Kesin sütun eşleştirmeleri
   id_col, stok_col, satis_col, maliyet_col, ilk_fiyat_col, indirimli_col, ciro_col, indirim_oran_col = (
       None,
       None,
@@ -116,69 +113,89 @@ def load_and_process_data(url):
       satis_col = col
     elif any(k in c for k in ["maliyet", "smm", "cost"]) and not maliyet_col:
       maliyet_col = col
-    elif "ilk" in c and not ilk_fiyat_col:
+    elif "ilk fiyat" in c or (
+        "ilk" in c and "fiyat" in c and not ilk_fiyat_col
+    ):
       ilk_fiyat_col = col
-    elif "indirimli" in c and not indirimli_col:
-      indirimli_col = col
+    elif (
+        "indirimli fiyat" in c
+        or "indirimli" in c
+        or ("fiyat" in c and "ilk" not in c and not indirimli_col)
+    ):
+      if not indirimli_col and "oran" not in c:
+        indirimli_col = col
     elif any(k in c for k in ["ciro", "tutar"]) and not ciro_col:
       ciro_col = col
-    elif "oran" in c and not indirim_oran_col:
+    elif any(k in c for k in ["oran", "indirim oran"]) and not indirim_oran_col:
       indirim_oran_col = col
 
-  # Konum bazlı emniyet eşleştirmesi
-  if not id_col and len(cols_list) > 1:
-    id_col = cols_list[1]
-  if not maliyet_col and len(cols_list) > 11:
+  # Konum bazlı emniyet garantisi (Görselindeki sıralama: Maliyet, İlk Fiyat, İndirimli Fiyat, İndirim Oranı)
+  if not maliyet_col and len(cols_list) >= 12:
     maliyet_col = cols_list[11]
-  if not ilk_fiyat_col and len(cols_list) > 12:
+  if not ilk_fiyat_col and len(cols_list) >= 13:
     ilk_fiyat_col = cols_list[12]
-  if not indirimli_col and len(cols_list) > 13:
+  if not indirimli_col and len(cols_list) >= 14:
     indirimli_col = cols_list[13]
-  if not indirim_oran_col and len(cols_list) > 14:
+  if not indirim_oran_col and len(cols_list) >= 15:
     indirim_oran_col = cols_list[14]
 
-  df["Stok_num"] = clean_numeric(df[stok_col]) if stok_col else 0.0
-  df["Satis_num"] = clean_numeric(df[satis_col]) if satis_col else 0.0
-  df["Maliyet_num"] = clean_numeric(df[maliyet_col]) if maliyet_col else 0.0
-  df["Ilk_Fiyat_num"] = clean_numeric(df[ilk_fiyat_col]) if ilk_fiyat_col else 0.0
-  df["Indirimli_Fiyat_num"] = (
-      clean_numeric(df[indirimli_col]) if indirimli_col else 0.0
-  )
+  # Ham verileri deforme etmeden, doğrudan e-tablodaki halleriyle saklıyoruz
+  df["Stok_num"] = pd.to_numeric(
+      df[stok_col].astype(str).str.replace(",", "."), errors="coerce"
+  ).fillna(0)
+  df["Satis_num"] = pd.to_numeric(
+      df[satis_col].astype(str).str.replace(",", "."), errors="coerce"
+  ).fillna(0)
 
-  # Fiyatlar birbirini tamamlama garantisi
-  df["Ilk_Fiyat_num"] = np.where(
-      df["Ilk_Fiyat_num"] == 0, df["Indirimli_Fiyat_num"], df["Ilk_Fiyat_num"]
-  )
-  df["Indirimli_Fiyat_num"] = np.where(
-      df["Indirimli_Fiyat_num"] == 0, df["Ilk_Fiyat_num"], df["Indirimli_Fiyat_num"]
-  )
-
-  df["Ciro_num"] = clean_numeric(df[ciro_col]) if ciro_col else 0.0
-  df["Indirim_Oran_num"] = (
-      clean_numeric(df[indirim_oran_col]) if indirim_oran_col else 0.0
-  )
+  # Ham değerleri string olarak koruyoruz ki TL veya orijinal format bozulmasın
+  df["Raw_Maliyet"] = df[maliyet_col] if maliyet_col else 0
+  df["Raw_Ilk_Fiyat"] = df[ilk_fiyat_col] if ilk_fiyat_col else 0
+  df["Raw_Indirimli_Fiyat"] = df[indirimli_col] if indirimli_col else 0
+  df["Raw_Ciro"] = df[ciro_col] if ciro_col else 0
+  df["Raw_Indirim_Orani"] = df[indirim_oran_col] if indirim_oran_col else 0
 
   group_col = id_col if id_col else cols_list[0]
+
+  # Sayısal hesaplamalar için sayısal kopyalar
+  df["Maliyet_val"] = (
+      df["Raw_Maliyet"]
+      .astype(str)
+      .str.upper()
+      .str.replace("TRY", "", regex=False)
+      .str.replace("TL", "", regex=False)
+      .str.strip()
+      .str.replace(".", "", regex=False)
+      .str.replace(",", ".", regex=False)
+  )
+  df["Maliyet_val"] = pd.to_numeric(df["Maliyet_val"], errors="coerce").fillna(0)
+
+  df["Indirimli_val"] = (
+      df["Raw_Indirimli_Fiyat"]
+      .astype(str)
+      .str.upper()
+      .str.replace("TRY", "", regex=False)
+      .str.replace("TL", "", regex=False)
+      .str.strip()
+      .str.replace(".", "", regex=False)
+      .str.replace(",", ".", regex=False)
+  )
+  df["Indirimli_val"] = pd.to_numeric(
+      df["Indirimli_val"], errors="coerce"
+  ).fillna(0)
 
   agg_rules = {
       "Stok_num": "last",
       "Satis_num": "sum",
-      "Maliyet_num": "first",
-      "Ilk_Fiyat_num": "first",
-      "Indirimli_Fiyat_num": "first",
-      "Ciro_num": "sum",
-      "Indirim_Oran_num": "first",
+      "Maliyet_val": "first",
+      "Indirimli_val": "first",
   }
   for col in df.columns:
     if col not in [
         group_col,
         "Stok_num",
         "Satis_num",
-        "Maliyet_num",
-        "Ilk_Fiyat_num",
-        "Indirimli_Fiyat_num",
-        "Ciro_num",
-        "Indirim_Oran_num",
+        "Maliyet_val",
+        "Indirimli_val",
         stok_col,
         satis_col,
         maliyet_col,
@@ -198,23 +215,8 @@ def load_and_process_data(url):
   df_grouped["Satış Adeti"] = df_grouped["Satis_num"]
   df_grouped["Giriş Adeti"] = df_grouped["Satış Adeti"] + df_grouped["Stok"]
 
-  raw_cost = df_grouped["Maliyet_num"]
-  raw_first_price = df_grouped["Ilk_Fiyat_num"]
-  raw_current_price = df_grouped["Indirimli_Fiyat_num"]
-
-  calculated_ciro = raw_current_price * df_grouped["Satış Adeti"]
-  raw_ciro = np.where(
-      df_grouped["Ciro_num"] > 0, df_grouped["Ciro_num"], calculated_ciro
-  )
-
-  tablodaki_oran = df_grouped["Indirim_Oran_num"]
-  hesaplanan_oran = np.where(
-      raw_first_price > 0,
-      1 - (raw_current_price / raw_first_price),
-      0.0,
-  )
-  final_oran = np.where(tablodaki_oran > 0, tablodaki_oran, hesaplanan_oran)
-
+  raw_cost = df_grouped["Maliyet_val"]
+  raw_current_price = df_grouped["Indirimli_val"]
   stock_qty = df_grouped["Stok"]
   total_sales = df_grouped["Satış Adeti"]
 
@@ -250,12 +252,7 @@ def load_and_process_data(url):
       default="Normal",
   )
 
-  target_increase_price = np.where(
-      raw_first_price > raw_current_price,
-      raw_first_price,
-      raw_current_price,
-  )
-
+  target_increase_price = raw_current_price  # Koruma fiyatı
   suggested_price = np.select(
       [mask_liquidation, mask_tier1_discount, mask_high_performer],
       [
@@ -278,31 +275,41 @@ def load_and_process_data(url):
       0.0,
   )
 
-  # Değerleri ve formatları doğru sütunlara işliyoruz
+  # Tablodaki orijinal hücre verilerini doğrudan aynen uyguluyoruz
   if ciro_col and ciro_col in df_grouped.columns:
-    df_grouped[ciro_col] = pd.Series(raw_ciro).apply(format_tl)
+    df_grouped[ciro_col] = df_grouped["Raw_Ciro"].apply(format_tl)
   else:
-    df_grouped["Ciro"] = pd.Series(raw_ciro).apply(format_tl)
+    df_grouped["Ciro"] = df_grouped["Raw_Ciro"].apply(format_tl)
 
   if maliyet_col and maliyet_col in df_grouped.columns:
-    df_grouped[maliyet_col] = raw_cost.apply(format_tl)
+    df_grouped[maliyet_col] = df_grouped["Raw_Maliyet"].apply(format_tl)
   else:
-    df_grouped["Maliyet"] = raw_cost.apply(format_tl)
+    df_grouped["Maliyet"] = df_grouped["Raw_Maliyet"].apply(format_tl)
 
   if ilk_fiyat_col and ilk_fiyat_col in df_grouped.columns:
-    df_grouped[ilk_fiyat_col] = raw_first_price.apply(format_tl)
+    df_grouped[ilk_fiyat_col] = df_grouped["Raw_Ilk_Fiyat"].apply(format_tl)
   else:
-    df_grouped["İlk Fiyat"] = raw_first_price.apply(format_tl)
+    df_grouped["İlk Fiyat"] = df_grouped["Raw_Ilk_Fiyat"].apply(format_tl)
 
+  # İndirimli Fiyat e-tablodaki ham halinin birebir aynısı (TL formatında)
   if indirimli_col and indirimli_col in df_grouped.columns:
-    df_grouped[indirimli_col] = raw_current_price.apply(format_tl)
+    df_grouped[indirimli_col] = df_grouped["Raw_Indirimli_Fiyat"].apply(
+        format_tl
+    )
   else:
-    df_grouped["İndirimli Fiyat"] = raw_current_price.apply(format_tl)
+    df_grouped["İndirimli Fiyat"] = df_grouped["Raw_Indirimli_Fiyat"].apply(
+        format_tl
+    )
 
+  # İndirim Oranı yüzdelik formatta
   if indirim_oran_col and indirim_oran_col in df_grouped.columns:
-    df_grouped[indirim_oran_col] = pd.Series(final_oran).apply(format_percentage)
+    df_grouped[indirim_oran_col] = df_grouped["Raw_Indirim_Orani"].apply(
+        format_percentage
+    )
   else:
-    df_grouped["İndirim Oranı"] = pd.Series(final_oran).apply(format_percentage)
+    df_grouped["İndirim Oranı"] = df_grouped["Raw_Indirim_Orani"].apply(
+        format_percentage
+    )
 
   df_grouped["Haftalık Satış Hızı"] = np.round(weekly_sales_rate, 2)
   df_grouped["Stok Ömrü (WOS)"] = np.round(wos, 1)
@@ -315,18 +322,18 @@ def load_and_process_data(url):
   )
   df_grouped["Önerilen İndirim (%)"] = suggested_discount
 
-  df_grouped = df_grouped.drop(
-      columns=[
-          "Stok_num",
-          "Satis_num",
-          "Maliyet_num",
-          "Ilk_Fiyat_num",
-          "Indirimli_Fiyat_num",
-          "Ciro_num",
-          "Indirim_Oran_num",
-      ],
-      errors="ignore",
-  )
+  drop_cols = [
+      "Stok_num",
+      "Satis_num",
+      "Maliyet_val",
+      "Indirimli_val",
+      "Raw_Maliyet",
+      "Raw_Ilk_Fiyat",
+      "Raw_Indirimli_Fiyat",
+      "Raw_Ciro",
+      "Raw_Indirim_Orani",
+  ]
+  df_grouped = df_grouped.drop(columns=drop_cols, errors="ignore")
 
   final_cols = []
   for col in original_columns:
@@ -354,7 +361,10 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Fiyatlar ve indirim oranları doğru sütunlarla eşleştirildi!")
+  st.success(
+      "İndirimli fiyatlar e-tablodaki değerleriyle birebir uyumlu hale"
+      " getirildi!"
+  )
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
