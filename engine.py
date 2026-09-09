@@ -34,34 +34,23 @@ def load_and_process_data(url):
 
   df.columns = df.columns.str.strip()
 
-  # Hafta sütununu kümüle rapordan tamamen çıkarıyoruz
+  # Hafta sütununu temizle
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
 
-  # Google Sheets sütun eşleştirmeleri
-  stok_col = (
-      "Stok"
-      if "Stok" in df.columns
-      else ("Stok Adedi" if "Stok Adedi" in df.columns else None)
-  )
-  satis_col = (
-      "Satış Adeti"
-      if "Satış Adeti" in df.columns
-      else ("Satış adedi payı" if "Satış adedi payı" in df.columns else None)
-  )
-  maliyet_col = (
-      "Maliyet"
-      if "Maliyet" in df.columns
-      else ("SMM" if "SMM" in df.columns else None)
-  )
+  # Sütun adlarını esnek ve garantili bulma (Esnek Eşleştirme)
+  stok_col, satis_col, maliyet_col, fiyat_col = None, None, None, None
 
-  fiyat_col = None
   for col in df.columns:
-    if "İndirimli" in col or "PSF" in col or "Mevcut" in col:
+    col_lower = col.lower()
+    if "stok" in col_lower and not stok_col:
+      stok_col = col
+    elif ("satış" in col_lower or "satis" in col_lower) and not satis_col:
+      satis_col = col
+    elif ("maliyet" in col_lower or "smm" in col_lower or "cost" in col_lower) and not maliyet_col:
+      maliyet_col = col
+    elif ("indirim" in col_lower or "psf" in col_lower or "fiyat" in col_lower) and not fiyat_col:
       fiyat_col = col
-      break
-  if not fiyat_col and "İlk Fiyat" in df.columns:
-    fiyat_col = "İlk Fiyat"
 
   df["Stok_num"] = clean_numeric(df[stok_col]) if stok_col else 0.0
   df["Satis_num"] = clean_numeric(df[satis_col]) if satis_col else 0.0
@@ -69,13 +58,13 @@ def load_and_process_data(url):
   df["Fiyat_num"] = clean_numeric(df[fiyat_col]) if fiyat_col else 0.0
 
   # Id bazlı kümüle gruplama
-  id_col = (
-      "Id"
-      if "Id" in df.columns
-      else ("ID" if "ID" in df.columns else ("id" if "id" in df.columns else None))
-  )
+  id_col = None
+  for col in df.columns:
+    if col.lower() in ["id", "ürün kodu", "urun kodu"]:
+      id_col = col
+      break
 
-  if id_col and id_col in df.columns:
+  if id_col:
     agg_rules = {
         "Stok_num": "last",
         "Satis_num": "sum",
@@ -83,17 +72,7 @@ def load_and_process_data(url):
         "Fiyat_num": "first",
     }
     for col in df.columns:
-      if col not in [
-          id_col,
-          "Stok_num",
-          "Satis_num",
-          "Maliyet_num",
-          "Fiyat_num",
-          stok_col,
-          satis_col,
-          maliyet_col,
-          fiyat_col,
-      ]:
+      if col not in [id_col, "Stok_num", "Satis_num", "Maliyet_num", "Fiyat_num", stok_col, satis_col, maliyet_col, fiyat_col]:
         agg_rules[col] = "first"
 
     df_grouped = df.groupby(id_col, as_index=False).agg(agg_rules)
@@ -183,17 +162,16 @@ def load_and_process_data(url):
 
 try:
   df_result = load_and_process_data(SHEET_URL)
-  st.success("Veriler Id bazlı kümüle edildi ve başarıyla yüklendi!")
+  st.success("Veriler başarıyla yüklendi ve analiz edildi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
-  id_col = (
-      "Id"
-      if "Id" in df_result.columns
-      else ("ID" if "ID" in df_result.columns else None)
-  )
-  filter_col = (
-      id_col if id_col else ("Ürün Kodu" if "Ürün Kodu" in df_result.columns else "Ürün Adı")
-  )
+  filter_col = None
+  for col in df_result.columns:
+    if col.lower() in ["id", "ürün kodu", "urun kodu"]:
+      filter_col = col
+      break
+  if not filter_col and len(df_result.columns) > 0:
+    filter_col = df_result.columns[0]
 
   selected_code = "Tümü"
   if filter_col and filter_col in df_result.columns:
