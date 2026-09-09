@@ -50,6 +50,9 @@ def load_and_process_data(url):
 
   df.columns = df.columns.str.strip()
 
+  # Orijinal e-tablo sütun sırasını korumak için orijinal başlıkları saklıyoruz
+  original_columns = [c for c in df.columns if c.lower() != "hafta"]
+
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
 
@@ -63,7 +66,6 @@ def load_and_process_data(url):
       None,
   )
 
-  # Sütunları net ve güvenli şekilde yakalıyoruz
   for col in df.columns:
     c_clean = (
         col.lower()
@@ -88,7 +90,6 @@ def load_and_process_data(url):
     elif ("ciro" in c_clean or "tutar" in c_clean) and not ciro_col:
       ciro_col = col
 
-  # İkincil esnek tarama
   for col in df.columns:
     c = col.lower()
     if not id_col and ("id" in c or "kod" in c):
@@ -114,7 +115,6 @@ def load_and_process_data(url):
       clean_numeric(df[indirimli_col]) if indirimli_col else 0.0
   )
 
-  # Fiyatlar boş gelirse birbirini tamamlasın
   df["Ilk_Fiyat_num"] = np.where(
       df["Ilk_Fiyat_num"] == 0, df["Indirimli_Fiyat_num"], df["Ilk_Fiyat_num"]
   )
@@ -239,12 +239,36 @@ def load_and_process_data(url):
       0.0,
   )
 
-  # Görsel Formatlamalar
-  df_grouped["Ciro"] = pd.Series(raw_ciro).apply(format_tl)
-  df_grouped["Maliyet"] = raw_cost.apply(format_tl)
-  df_grouped["İlk Fiyat"] = raw_first_price.apply(format_tl)
-  df_grouped["İndirimli Fiyat"] = raw_current_price.apply(format_tl)
-  df_grouped["İndirim Oranı"] = (
+  # Değerleri ve formatları uyguluyoruz
+  if ciro_col and ciro_col in df_grouped.columns:
+    df_grouped[ciro_col] = pd.Series(raw_ciro).apply(format_tl)
+  else:
+    df_grouped["Ciro"] = pd.Series(raw_ciro).apply(format_tl)
+
+  if maliyet_col and maliyet_col in df_grouped.columns:
+    df_grouped[maliyet_col] = raw_cost.apply(format_tl)
+  else:
+    df_grouped["Maliyet"] = raw_cost.apply(format_tl)
+
+  if ilk_fiyat_col and ilk_fiyat_col in df_grouped.columns:
+    df_grouped[ilk_fiyat_col] = raw_first_price.apply(format_tl)
+  else:
+    df_grouped["İlk Fiyat"] = raw_first_price.apply(format_tl)
+
+  if indirimli_col and indirimli_col in df_grouped.columns:
+    df_grouped[indirimli_col] = raw_current_price.apply(format_tl)
+  else:
+    df_grouped["İndirimli Fiyat"] = raw_current_price.apply(format_tl)
+
+  # İndirim oranını e-tablodaki orijinal adına göre yerleştir
+  discount_col_name = "İndirim Oranı"
+  for col in original_columns:
+    if "oran" in col.lower() or "indirim" in col.lower():
+      if col != indirimli_col:
+        discount_col_name = col
+        break
+
+  df_grouped[discount_col_name] = (
       np.round(np.maximum(0.0, raw_discount), 2).astype(str) + "%"
   )
 
@@ -271,39 +295,35 @@ def load_and_process_data(url):
       errors="ignore",
   )
 
-  # İSTEDİĞİN SÜTUN SIRALAMASI: Renk Adı ve Kodundan sonra Fiyatlar ve Ciro gelecek şekilde
-  prefix_cols = []
-  for c in ["Id", "ANA KATEGORİ Açıklama", "Ürün Kodu", "Ürün Adı", "Renk Kodu", "Renk Açıklaması"]:
-    matched = [col for col in df_grouped.columns if col.lower() == c.lower()]
-    if matched:
-        prefix_cols.append(matched[0])
+  # E-tablodaki orijinal sütun sırasını birebir koruyoruz + ek karar metriklerini ekliyoruz
+  final_cols = []
+  for col in original_columns:
+    if col in df_grouped.columns:
+      final_cols.append(col)
 
-  remaining_cols = [
-      c for c in df_grouped.columns if c not in prefix_cols
+  # Eğer hesaplanan yeni sütunlar listede yoksa ekleyelim
+  extra_cols = [
+      "Haftalık Satış Hızı",
+      "Stok Ömrü (WOS)",
+      "Brüt Kâr (TL)",
+      "GMROI Verimliliği",
+      "Önerilen Aksiyon",
+      "Aciliyet Seviyesi",
+      "Önerilen Yeni Fiyat (TL)",
+      "Önerilen İndirim (%)",
   ]
+  for ec in extra_cols:
+    if ec in df_grouped.columns and ec not in final_cols:
+      final_cols.append(ec)
 
-  ordered_cols = prefix_cols + [
-      "Maliyet",
-      "İlk Fiyat",
-      "İndirimli Fiyat",
-      "İndirim Oranı",
-      "Ciro",
-      "Giriş Adeti",
-      "Satış Adeti",
-      "Stok",
-  ] + [c for c in remaining_cols if c not in [
-      "Maliyet", "İlk Fiyat", "İndirimli Fiyat", "İndirim Oranı", "Ciro", "Giriş Adeti", "Satış Adeti", "Stok"
-  ]]
-
-  existing_cols = [c for c in ordered_cols if c in df_grouped.columns]
-  df_grouped = df_grouped[existing_cols]
+  df_grouped = df_grouped[final_cols]
 
   return df_grouped, group_col
 
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Sütun sıralaması ve fiyatlar başarıyla düzeltildi!")
+  st.success("E-tablo sıralaması ve formatlar başarıyla senkronize edildi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
