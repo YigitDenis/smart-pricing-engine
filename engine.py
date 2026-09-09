@@ -12,11 +12,6 @@ def clean_numeric(val):
         return 0.0
 
 def calculate_smart_pricing(df_grouped):
-    """
-    Ürün bazında birleştirilmiş veriler üzerinden akıllı fiyatlandırma çalıştırır.
-    DataFrame veya tekli satır (Series) durumlarını güvenle yönetir.
-    """
-    # Tekli satır/filtrelenmiş veri Series gelirse DataFrame'e çevir
     if isinstance(df_grouped, pd.Series):
         df_grouped = pd.DataFrame([df_grouped])
         
@@ -28,6 +23,11 @@ def calculate_smart_pricing(df_grouped):
         stock_qty = clean_numeric(row.get('Stok', row.get('Stok Adedi', 0)))
         weekly_sales = clean_numeric(row.get('Satış Adeti', row.get('Haftalık Satış', 0)))
         
+        # Eklenen Zengin Finansal Metrikler
+        gmroi = clean_numeric(row.get('Gmroi', 0))
+        profit_margin = clean_numeric(row.get('KAR MARJI', row.get('Kar Marjı', 0)))
+        sales_share = clean_numeric(row.get('Satış adeti payı', 0))
+        
         min_allowable_price = cost * 1.20
         
         if weekly_sales == 0:
@@ -35,23 +35,29 @@ def calculate_smart_pricing(df_grouped):
         else:
             wos = stock_qty / weekly_sales
             
-        action = "Fiyatı Koru"
+        action = "Fiyatı Koru (Optimum Seviye)"
         suggested_price = current_price
         urgency = "Normal"
         
+        # Gelişmiş Karar Matrisi (WOS + GMROI + Marj + Pay)
         if wos < 2 and weekly_sales > 2:
             action = "Fiyat Artır / Koru"
             suggested_price = current_price
             urgency = "Düşük"
+        elif gmroi > 0 and gmroi < 1.0 and stock_qty > 10:
+            action = "GMROI Düşük: 1. Kademe İndirim (%15)"
+            suggested_price = current_price * 0.85
+            urgency = "Orta"
         elif wos > 10 or (weekly_sales == 0 and stock_qty > 5):
             action = "1. Kademe İndirim (%15)"
             suggested_price = current_price * 0.85
             urgency = "Orta"
-        elif wos > 15:
+        elif wos > 15 or (profit_margin > 0.40 and stock_qty > 20):
             action = "Tasfiye İndirimi (%30)"
             suggested_price = current_price * 0.70
             urgency = "Yüksek"
 
+        # Stop-Loss Güvencesi
         if suggested_price < min_allowable_price:
             suggested_price = min_allowable_price
             urgency = "Kırmızı Alarm (Taban Fiyat)"
