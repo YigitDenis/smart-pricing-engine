@@ -53,8 +53,8 @@ def load_and_process_data(url):
     if (
         "ürün kodu" in col_clean
         or "urun kodu" in col_clean
-        or col_clean == "id"
-    ) and not code_col:
+        and not code_col
+    ):
       code_col = col
     elif col_clean in ["stok", "stok adedi"] and not stok_col:
       stok_col = col
@@ -72,9 +72,15 @@ def load_and_process_data(url):
 
   if not code_col:
     for col in df.columns:
-      if "kod" in col.lower() or "id" in col.lower():
+      if "kod" in col.lower():
         code_col = col
         break
+  if not code_col:
+    for col in df.columns:
+      if "id" in col.lower():
+        code_col = col
+        break
+
   if not stok_col:
     for col in df.columns:
       if "stok" in col.lower():
@@ -103,8 +109,9 @@ def load_and_process_data(url):
 
   group_col = code_col if code_col else df.columns[0]
 
+  # Ürün Kodu bazlı kümüle gruplama (Stokları topla, satışları topla)
   agg_rules = {
-      "Stok_num": "last",
+      "Stok_num": "sum",
       "Satis_num": "sum",
       "Maliyet_num": "first",
       "Fiyat_num": "first",
@@ -208,14 +215,14 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Veriler başarıyla yüklendi ve kümüle edildi!")
+  st.success("Veriler Ürün Kodu bazlı kümüle edildi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   selected_code = "Tümü"
   if group_col and group_col in df_result.columns:
     unique_codes = df_result[group_col].dropna().unique().tolist()
     selected_code = st.sidebar.selectbox(
-        "Ürün Kodu Seçin", ["Tümü"] + [str(x) for x in unique_codes]
+        "Stok Kodu Seçin", ["Tümü"] + [str(x) for x in unique_codes]
     )
 
   if selected_code != "Tümü":
@@ -228,7 +235,7 @@ try:
   df_filtered = df_filtered.reset_index(drop=True)
 
   col1, col2, col3, col4 = st.columns(4)
-  col1.metric("Toplam Çeşit / Kayıt", len(df_filtered))
+  col1.metric("Toplam Model / Stok Kodu", len(df_filtered))
   col2.metric(
       "Toplam Stok",
       int(df_filtered["Stok"].sum()) if "Stok" in df_filtered.columns else 0,
@@ -253,7 +260,7 @@ try:
   col4.metric("Kırmızı Alarm", alarm_count)
 
   st.markdown("---")
-  st.subheader("Ürün Bazlı Kümüle Fiyat ve Karar Analizi Raporu")
+  st.subheader("Ürün Kodu Bazlı Kümüle Fiyat ve Karar Analizi Raporu")
 
   st.dataframe(df_filtered, use_container_width=True)
 
@@ -271,7 +278,7 @@ try:
   st.download_button(
       label="📥 Net Raporu Excel Olarak İndir",
       data=excel_data,
-      file_name="akilli_fiyatlandirma_kumule_rapor.xlsx",
+      file_name="stok_kodu_bazli_fiyat_raporu.xlsx",
       mime=(
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       ),
