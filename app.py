@@ -82,7 +82,6 @@ def load_and_process_data(url):
     elif "ciro" in col_clean or "tutar" in col_clean:
       ciro_col = col
 
-  # Yedek arama mantığı
   if not id_col:
     for col in df.columns:
       if "id" in col.lower():
@@ -161,11 +160,20 @@ def load_and_process_data(url):
   df_grouped["Maliyet"] = df_grouped["Maliyet_num"]
   df_grouped["İndirimli Fiyat"] = df_grouped["Fiyat_num"]
   df_grouped["İlk Fiyat"] = df_grouped["Ilk_Fiyat_num"]
-  
-  # Ciro hesaplaması: Eğer tablodan ciro gelmediyse (veya 0 ise) Fiyat x Satış Adeti üzerinden hesapla
+
   calculated_ciro = df_grouped["Fiyat_num"] * df_grouped["Satis_num"]
   df_grouped["Ciro"] = np.where(
       df_grouped["Ciro_num"] > 0, df_grouped["Ciro_num"], calculated_ciro
+  )
+
+  # İndirim Oranı hesaplama (İlk Fiyat üzerinden)
+  raw_discount = np.where(
+      df_grouped["İlk Fiyat"] > 0,
+      (1 - (df_grouped["İndirimli Fiyat"] / df_grouped["İlk Fiyat"])) * 100,
+      0.0,
+  )
+  df_grouped["İndirim Oranı"] = (
+      np.round(np.maximum(0.0, raw_discount), 2).astype(str) + "%"
   )
 
   df_grouped = df_grouped.drop(
@@ -253,12 +261,21 @@ def load_and_process_data(url):
   df_grouped["Önerilen Yeni Fiyat (TL)"] = np.round(suggested_price, 2)
   df_grouped["Önerilen İndirim (%)"] = discount_rate
 
+  # Sütun Sıralamasını İstediğin Gibi Düzenliyoruz
+  base_cols = [c for c in df_grouped.columns if c not in [
+      "Ciro", "Satış Adeti", "Stok", "Maliyet", "İlk Fiyat", "İndirimli Fiyat", "İndirim Oranı"
+  ]]
+  
+  ordered_cols = base_cols[:4] + ["Ciro", "Satış Adeti", "Stok", "Maliyet", "İlk Fiyat", "İndirimli Fiyat", "İndirim Oranı"] + base_cols[4:]
+  existing_cols = [c for c in ordered_cols if c in df_grouped.columns]
+  df_grouped = df_grouped[existing_cols]
+
   return df_grouped, group_col
 
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Veriler ve ciro hesaplamaları başarıyla güncellendi!")
+  st.success("Sütun sıralaması ve finansal metrikler güncellendi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
