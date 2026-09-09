@@ -128,8 +128,8 @@ def load_and_process_data(url):
       "Stok_num": "last",
       "Satis_num": "sum",
       "Maliyet_num": "first",
-      "Fiyat_num": "first",
       "Ilk_Fiyat_num": "first",
+      "Fiyat_num": "first",
       "Ciro_num": "sum",
   }
   for col in df.columns:
@@ -138,8 +138,8 @@ def load_and_process_data(url):
         "Stok_num",
         "Satis_num",
         "Maliyet_num",
-        "Fiyat_num",
         "Ilk_Fiyat_num",
+        "Fiyat_num",
         "Ciro_num",
         stok_col,
         satis_col,
@@ -157,24 +157,34 @@ def load_and_process_data(url):
 
   df_grouped["Stok"] = df_grouped["Stok_num"]
   df_grouped["Satış Adeti"] = df_grouped["Satis_num"]
-  df_grouped["Maliyet"] = df_grouped["Maliyet_num"]
-  df_grouped["İndirimli Fiyat"] = df_grouped["Fiyat_num"]
-  df_grouped["İlk Fiyat"] = df_grouped["Ilk_Fiyat_num"]
+  
+  # Giriş Adeti = Satış + Son Stok
+  df_grouped["Giriş Adeti"] = df_grouped["Satış Adeti"] + df_grouped["Stok"]
+
+  # Para birimlerini TL formatına çeviriyoruz
+  df_grouped["Maliyet"] = clean_numeric(df_grouped["Maliyet_num"]).astype(str) + " TL"
+  df_grouped["İlk Fiyat"] = clean_numeric(df_grouped["Ilk_Fiyat_num"]).astype(str) + " TL"
+  df_grouped["İndirimli Fiyat"] = clean_numeric(df_grouped["Fiyat_num"]).astype(str) + " TL"
 
   calculated_ciro = df_grouped["Fiyat_num"] * df_grouped["Satis_num"]
-  df_grouped["Ciro"] = np.where(
+  final_ciro = np.where(
       df_grouped["Ciro_num"] > 0, df_grouped["Ciro_num"], calculated_ciro
   )
+  df_grouped["Ciro"] = pd.Series(final_ciro).astype(str) + " TL"
 
-  # İndirim Oranı hesaplama (İlk Fiyat üzerinden)
   raw_discount = np.where(
-      df_grouped["İlk Fiyat"] > 0,
-      (1 - (df_grouped["İndirimli Fiyat"] / df_grouped["İlk Fiyat"])) * 100,
+      df_grouped["Ilk_Fiyat_num"] > 0,
+      (1 - (df_grouped["Fiyat_num"] / df_grouped["Ilk_Fiyat_num"])) * 100,
       0.0,
   )
   df_grouped["İndirim Oranı"] = (
       np.round(np.maximum(0.0, raw_discount), 2).astype(str) + "%"
   )
+
+  # Sayısal hesaplamalar için ham hallerini saklıyoruz
+  raw_cost = df_grouped["Maliyet_num"]
+  raw_current_price = df_grouped["Fiyat_num"]
+  raw_first_price = df_grouped["Ilk_Fiyat_num"]
 
   df_grouped = df_grouped.drop(
       columns=[
@@ -190,9 +200,9 @@ def load_and_process_data(url):
 
   stock_qty = df_grouped["Stok"]
   total_sales = df_grouped["Satış Adeti"]
-  cost = df_grouped["Maliyet"]
-  current_price = df_grouped["İndirimli Fiyat"]
-  first_price = df_grouped["İlk Fiyat"]
+  cost = raw_cost
+  current_price = raw_current_price
+  first_price = raw_first_price
 
   active_weeks = 1.0
   weekly_sales_rate = total_sales / active_weeks
@@ -246,27 +256,52 @@ def load_and_process_data(url):
   )
   urgency = np.where(is_under_stoploss, "Kırmızı Alarm (Taban Fiyat)", urgency)
 
-  discount_rate = np.where(
-      current_price > 0,
-      np.round((1 - (suggested_price / current_price)) * 100, 2),
-      0.0,
-  )
-
   df_grouped["Haftalık Satış Hızı"] = np.round(weekly_sales_rate, 2)
   df_grouped["Stok Ömrü (WOS)"] = np.round(wos, 1)
   df_grouped["Brüt Kâr (TL)"] = np.round(realized_profit, 2)
   df_grouped["GMROI Verimliliği"] = np.round(gmroi, 2)
   df_grouped["Önerilen Aksiyon"] = action
   df_grouped["Aciliyet Seviyesi"] = urgency
-  df_grouped["Önerilen Yeni Fiyat (TL)"] = np.round(suggested_price, 2)
-  df_grouped["Önerilen İndirim (%)"] = discount_rate
+  df_grouped["Önerilen Yeni Fiyat (TL)"] = (
+      np.round(suggested_price, 2).astype(str) + " TL"
+  )
+  df_grouped["Önerilen İndirim (%)"] = np.where(
+      current_price > 0,
+      np.round((1 - (suggested_price / current_price)) * 100, 2),
+      0.0,
+  )
 
-  # Sütun Sıralamasını İstediğin Gibi Düzenliyoruz
-  base_cols = [c for c in df_grouped.columns if c not in [
-      "Ciro", "Satış Adeti", "Stok", "Maliyet", "İlk Fiyat", "İndirimli Fiyat", "İndirim Oranı"
-  ]]
-  
-  ordered_cols = base_cols[:4] + ["Ciro", "Satış Adeti", "Stok", "Maliyet", "İlk Fiyat", "İndirimli Fiyat", "İndirim Oranı"] + base_cols[4:]
+  # Sütun Sıralaması
+  base_cols = [
+      c
+      for c in df_grouped.columns
+      if c
+      not in [
+          "Ciro",
+          "Giriş Adeti",
+          "Satış Adeti",
+          "Stok",
+          "Maliyet",
+          "İlk Fiyat",
+          "İndirimli Fiyat",
+          "İndirim Oranı",
+      ]
+  ]
+
+  ordered_cols = (
+      base_cols[:4]
+      + [
+          "Ciro",
+          "Giriş Adeti",
+          "Satış Adeti",
+          "Stok",
+          "Maliyet",
+          "İlk Fiyat",
+          "İndirimli Fiyat",
+          "İndirim Oranı",
+      ]
+      + base_cols[4:]
+  )
   existing_cols = [c for c in ordered_cols if c in df_grouped.columns]
   df_grouped = df_grouped[existing_cols]
 
@@ -275,7 +310,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Sütun sıralaması ve finansal metrikler güncellendi!")
+  st.success("Giriş adeti eklendi ve para birimleri TL olarak güncellendi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
