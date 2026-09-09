@@ -1,32 +1,53 @@
 import pandas as pd
-import streamlit as st
-from engine import calculate_smart_pricing
 
-st.set_page_config(
-    page_title="Smart Pricing Engine", layout="wide"
-)
+def calculate_smart_pricing(row):
+    """
+    Maliyet, son hafta stoğu, son hafta satışı ve ilk fiyata göre
+    akıllı indirim veya fiyat artış kararı veren motor.
+    """
+    cost = row['Maliyet']
+    current_price = row['Mevcut Fiyat']
+    stock_qty = row['Stok']
+    weekly_sales = row['Satış Adeti']
+    
+    # Mutlak Taban Sınır (Stop-Loss): Mark-up en az 1.2 olmalı
+    min_allowable_price = cost * 1.20
+    
+    # Stok Ömrü (WOS) hesaplama
+    if weekly_sales == 0:
+        wos = 99.0
+    else:
+        wos = stock_qty / weekly_sales
+        
+    action = "Fiyatı Koru"
+    suggested_price = current_price
+    urgency = "Normal"
+    
+    # Karar Mekanizması
+    if wos < 2 and weekly_sales > 2:
+        action = "Fiyat Artır / Koru"
+        suggested_price = current_price
+        urgency = "Düşük"
+    elif wos > 10 or (weekly_sales == 0 and stock_qty > 5):
+        action = "1. Kademe İndirim (%15)"
+        suggested_price = current_price * 0.85
+        urgency = "Orta"
+    elif wos > 15:
+        action = "Tasfiye İndirimi (%30)"
+        suggested_price = current_price * 0.70
+        urgency = "Yüksek"
 
-st.title("Akıllı Fiyatlandırma ve Karar Destek Paneli")
+    # Stop-Loss Kontrolü
+    if suggested_price < min_allowable_price:
+        suggested_price = min_allowable_price
+        urgency = "Kırmızı Alarm (Taban Fiyat)"
+        
+    discount_rate = round((1 - (suggested_price / current_price)) * 100, 2) if current_price > 0 else 0.0
 
-# Senin Google Sheets bağlantın (CSV formatında dışa aktarım)
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1VWZsQvYK7CyZQiogmgLiVovufr9gnwWboa3sBt17VMA/export?format=csv&gid=0"
-
-
-@st.cache_data
-def load_data(url):
-  return pd.read_csv(url)
-
-
-try:
-  df = load_data(SHEET_URL)
-  st.success("Veriler Google Sheets'ten başarıyla yüklendi!")
-
-  # Karar motorunu tüm satırlara uygulama
-  results = df.apply(calculate_smart_pricing, axis=1)
-  df_result = pd.concat([df, results], axis=1)
-
-  st.subheader("Ürün Analiz ve Aksiyon Listesi")
-  st.dataframe(df_result)
-
-except Exception as e:
-  st.error(f"Veri yüklenirken hata oluştu: {e}")
+    return pd.Series({
+        "WOS_Hafta": round(wos, 1),
+        "Aksiyon": action,
+        "Aciliyet": urgency,
+        "Onerilen_Fiyat": round(suggested_price, 2),
+        "Onerilen_Indirim_Yuzde": max(0.0, discount_rate)
+    })
