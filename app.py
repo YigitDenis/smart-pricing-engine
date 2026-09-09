@@ -1,5 +1,4 @@
 import io
-import traceback
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -39,29 +38,32 @@ def load_and_process_data(url):
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
 
-  stok_col, satis_col, maliyet_col, fiyat_col = None, None, None, None
+  # Sütunları tam adlarıyla veya esnek eşleştirme ile bul
+  stok_col, satis_col, maliyet_col, fiyat_col, id_col = None, None, None, None, None
 
   for col in df.columns:
     col_lower = col.lower()
-    if "stok" in col_lower and not stok_col:
+    if col_lower == "id" and not id_col:
+      id_col = col
+    elif "stok" in col_lower and not stok_col:
       stok_col = col
-    elif ("satış" in col_lower or "satis" in col_lower) and not satis_col:
+    elif ("satış adeti" in col_lower or "satis adeti" in col_lower) and not satis_col:
       satis_col = col
     elif ("maliyet" in col_lower or "smm" in col_lower or "cost" in col_lower) and not maliyet_col:
       maliyet_col = col
-    elif ("indirimli" in col_lower or "psf" in col_lower or "fiyat" in col_lower) and not fiyat_col:
+    elif ("indirimli fiy" in col_lower or "indirimli" in col_lower or "psf" in col_lower) and not fiyat_col:
       fiyat_col = col
+
+  if not id_col:
+    for col in df.columns:
+      if "id" in col.lower():
+        id_col = col
+        break
 
   df["Stok_num"] = clean_numeric(df[stok_col]) if stok_col else 0.0
   df["Satis_num"] = clean_numeric(df[satis_col]) if satis_col else 0.0
   df["Maliyet_num"] = clean_numeric(df[maliyet_col]) if maliyet_col else 0.0
   df["Fiyat_num"] = clean_numeric(df[fiyat_col]) if fiyat_col else 0.0
-
-  id_col = None
-  for col in df.columns:
-    if col.lower() in ["id", "ürün kodu", "urun kodu"]:
-      id_col = col
-      break
 
   if id_col:
     agg_rules = {
@@ -100,6 +102,11 @@ def load_and_process_data(url):
       columns=["Stok_num", "Satis_num", "Maliyet_num", "Fiyat_num"],
       errors="ignore",
   )
+
+  # Eğer Id sütunu varsa en başa taşı
+  if id_col and id_col in df_grouped.columns:
+    cols = [id_col] + [c for c in df_grouped.columns if c != id_col]
+    df_grouped = df_grouped[cols]
 
   stock_qty = df_grouped["Stok"]
   total_sales = df_grouped["Satış Adeti"]
@@ -176,7 +183,7 @@ try:
   st.sidebar.subheader("Filtreleme Paneli")
   filter_col = None
   for col in df_result.columns:
-    if col.lower() in ["id", "ürün kodu", "urun kodu"]:
+    if col.lower() == "id":
       filter_col = col
       break
   if not filter_col and len(df_result.columns) > 0:
@@ -249,5 +256,4 @@ try:
   )
 
 except Exception as e:
-  st.error("Uygulama çalışırken teknik bir hata oluştu:")
-  st.exception(e)
+  st.error(f"Hata oluştu: {e}")
