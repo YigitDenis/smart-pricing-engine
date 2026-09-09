@@ -1,75 +1,95 @@
+import io
 import pandas as pd
+import streamlit as st
+from engine import calculate_smart_pricing, clean_numeric
 
-def clean_numeric(val):
-    if pd.isna(val):
-        return 0.0
-    if isinstance(val, (int, float)):
-        return float(val)
-    val_str = str(val).strip().replace('.', '').replace(',', '.')
-    try:
-        return float(val_str)
-    except:
-        return 0.0
+st.set_page_config(page_title="Smart Pricing Engine", layout="wide")
 
-def calculate_smart_pricing(df_grouped):
-    if isinstance(df_grouped, pd.Series):
-        df_grouped = pd.DataFrame([df_grouped])
-        
-    results = []
+st.title("Akıllı Fiyatlandırma ve Karar Destek Paneli")
+
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1VWZsQvYK7CyZQiogmgLiVovufr9gnwWboa3sBt17VMA/export?format=csv&gid=0"
+
+@st.cache_data(ttl=600)
+def load_data(url):
+    return pd.read_csv(url)
+
+try:
+    df = load_data(SHEET_URL)
+    st.success("Veriler Google Sheets'ten başarıyla yüklendi!")
+
+    # Temel sayısal dönüşümler
+    df["Stok_num"] = df["Stok"].apply(clean_numeric) if "Stok" in df.columns else 0
+    df["Satis_num"] = df["Satış Adeti"].apply(clean_numeric) if "Satış Adeti" in df.columns else 0
+
+    # Gruplama sözlüğü (Mevcut sütunlara göre dinamik)
+    aggregation_dict = {}
+    if "Stok_num" in df.columns: aggregation_dict["Stok_num"] = "last"
+    if "Satis_num" in df.columns: aggregation_dict["Satis_num"] = "sum"
+    if "Maliyet" in df.columns: aggregation_dict["Maliyet"] = "first"
+    if "İndirimli Fiyat" in df.columns: aggregation_dict["İndirimli Fiyat"] = "first"
+    if "İlk Fiyat" in df.columns: aggregation_dict["İlk Fiyat"] = "first"
+    if "Gmroi" in df.columns: aggregation_dict["Gmroi"] = "first"
+    if "KAR MARJI" in df.columns: aggregation_dict["KAR MARJI"] = "first"
+    if "Satış adeti payı" in df.columns: aggregation_dict["Satış adeti payı"] = "first"
+    if "Ürün Adı" in df.columns: aggregation_dict["Ürün Adı"] = "first"
+    if "Renk Kodu" in df.columns: aggregation_dict["Renk Kodu"] = "first"
+    if "Renk Açıklaması" in df.columns: aggregation_dict["Renk Açıklaması"] = "first"
+
+    group_cols = [col for col in ["Ürün Kodu", "Renk Kodu"] if col in df.columns]
+    if not group_cols and "Ürün Adı" in df.columns:
+        group_cols = ["Ürün Adı"]
+
+    if group_cols:
+        df_grouped = df.groupby(group_cols).agg(aggregation_dict).reset_index()
+    else:
+        df_grouped = df.copy()
+
+    if "Stok_num" in df_grouped.columns:
+        df_grouped["Stok"] = df_grouped["Stok_num"]
+    if "Satis_num" in df_grouped.columns:
+        df_grouped["Satış Adeti"] = df_grouped["Satis_num"]
+
+    # --- FİLTRELEME ---
+    st.sidebar.subheader("Filtreleme Paneli")
+    unique_codes = df_grouped["Ürün Kodu"].unique().tolist() if "Ürün Kodu" in df_grouped.columns else []
+    selected_code = st.sidebar.selectbox("Ürün Kodu Seçin", ["Tümü"] + unique_codes)
+
+    if selected_code != "Tümü" and "Ürün Kodu" in df_grouped.columns:
+        df_filtered = df_grouped[df_grouped["Ürün Kodu"] == selected_code]
+    else:
+        df_filtered = df_grouped
+
+    # Motoru çalıştır
+    results_df = calculate_smart_pricing(df_filtered)
+    results_df.index = df_filtered.index
+    df_result = pd.concat([df_filtered, results_df], axis=1)
+
+    # Özet Metrikler
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Toplam Ürün/Varyant", len(df_result))
+    col2.metric("Toplam Stok", int(df_result["Stok"].sum()) if "Stok" in df_result.columns else 0)
+    col3.metric("Toplam Satış Adeti", int(df_result["Satış Adeti"].sum()) if "Satış Adeti" in df_result.columns else 0)
+    alarm_count = len(df_result[df_result["Aciliyet"].str.contains("Kırmızı Alarm", na=False)]) if "Aciliyet" in df_result.columns else 0
+    col4.metric("Kırmızı Alarm", alarm_count)
+
+    st.markdown("---")
+    st.subheader("Ürün Analiz ve Aksiyon Listesi")
     
-    for _, row in df_grouped.iterrows():
-        cost = clean_numeric(row.get('Maliyet', row.get('Cost', 0)))
-        current_price = clean_numeric(row.get('İndirimli Fiyat', row.get('Mevcut Fiyat', row.get('İlk Fiyat', 0))))
-        stock_qty = clean_numeric(row.get('Stok', row.get('Stok Adedi', 0)))
-        weekly_sales = clean_numeric(row.get('Satış Adeti', row.get('Haftalık Satış', 0)))
-        
-        # Eklenen Zengin Finansal Metrikler
-        gmroi = clean_numeric(row.get('Gmroi', 0))
-        profit_margin = clean_numeric(row.get('KAR MARJI', row.get('Kar Marjı', 0)))
-        sales_share = clean_numeric(row.get('Satış adeti payı', 0))
-        
-        min_allowable_price = cost * 1.20
-        
-        if weekly_sales == 0:
-            wos = 99.0
-        else:
-            wos = stock_qty / weekly_sales
-            
-        action = "Fiyatı Koru (Optimum Seviye)"
-        suggested_price = current_price
-        urgency = "Normal"
-        
-        # Gelişmiş Karar Matrisi (WOS + GMROI + Marj + Pay)
-        if wos < 2 and weekly_sales > 2:
-            action = "Fiyat Artır / Koru"
-            suggested_price = current_price
-            urgency = "Düşük"
-        elif gmroi > 0 and gmroi < 1.0 and stock_qty > 10:
-            action = "GMROI Düşük: 1. Kademe İndirim (%15)"
-            suggested_price = current_price * 0.85
-            urgency = "Orta"
-        elif wos > 10 or (weekly_sales == 0 and stock_qty > 5):
-            action = "1. Kademe İndirim (%15)"
-            suggested_price = current_price * 0.85
-            urgency = "Orta"
-        elif wos > 15 or (profit_margin > 0.40 and stock_qty > 20):
-            action = "Tasfiye İndirimi (%30)"
-            suggested_price = current_price * 0.70
-            urgency = "Yüksek"
+    # Stil hatası riskini ortadan kaldıran normal dataframe gösterimi
+    st.dataframe(df_result, use_container_width=True)
 
-        # Stop-Loss Güvencesi
-        if suggested_price < min_allowable_price:
-            suggested_price = min_allowable_price
-            urgency = "Kırmızı Alarm (Taban Fiyat)"
-            
-        discount_rate = round((1 - (suggested_price / current_price)) * 100, 2) if current_price > 0 else 0.0
+    # Excel İndirme
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_result.to_excel(writer, index=False, sheet_name="Aksiyon_Listesi")
+    processed_data = output.getvalue()
 
-        results.append({
-            "WOS_Hafta": round(wos, 1),
-            "Aksiyon": action,
-            "Aciliyet": urgency,
-            "Onerilen_Fiyat": round(suggested_price, 2),
-            "Onerilen_Indirim_Yuzde": max(0.0, discount_rate)
-        })
-        
-    return pd.DataFrame(results)
+    st.download_button(
+        label="📥 Tabloyu Excel Olarak İndir",
+        data=processed_data,
+        file_name="akilli_fiyatlandirma_aksiyonlari.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+except Exception as e:
+    st.error(f"Hata oluştu: {e}")
