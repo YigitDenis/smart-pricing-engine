@@ -26,7 +26,7 @@ def clean_numeric(series):
 
 
 @st.cache_data(ttl=3600)
-def load_and_aggregate_data(url):
+def load_and_process_data(url):
   df = pd.read_csv(url)
 
   if isinstance(df, pd.Series):
@@ -34,22 +34,42 @@ def load_and_aggregate_data(url):
 
   df.columns = df.columns.str.strip()
 
-  # Hafta sütununu kümüle rapordan tamamen çıkarıyoruz
+  # Hafta sütununu temizle
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
 
-  # Sayısal dönüşümler için geçici alanlar
-  if "Stok" in df.columns:
-    df["Stok_num"] = clean_numeric(df["Stok"])
-  else:
-    df["Stok_num"] = 0.0
+  # Doğru sütun eşleştirmeleri (Google Sheets başlıklarına göre)
+  stok_col = (
+      "Stok"
+      if "Stok" in df.columns
+      else ("Stok Adedi" if "Stok Adedi" in df.columns else None)
+  )
+  satis_col = (
+      "Satış Adeti"
+      if "Satış Adeti" in df.columns
+      else ("Satış adedi payı" if "Satış adedi payı" in df.columns else None)
+  )
+  maliyet_col = (
+      "Maliyet"
+      if "Maliyet" in df.columns
+      else ("SMM" if "SMM" in df.columns else None)
+  )
 
-  if "Satış Adeti" in df.columns:
-    df["Satis_num"] = clean_numeric(df["Satış Adeti"])
-  else:
-    df["Satis_num"] = 0.0
+  # İndirimli Fiyat sütun adı görselde kesilmiş ('İndirimli Fiy...') olduğu için dinamik buluyoruz
+  fiyat_col = None
+  for col in df.columns:
+    if "İndirimli" in col or "PSF" in col or "Mevcut" in col:
+      fiyat_col = col
+      break
+  if not fiyat_col and "İlk Fiyat" in df.columns:
+    fiyat_col = "İlk Fiyat"
 
-  # Id bazlı kümüle gruplama (Aynı Id'leri tekilleştir, satışı topla, stoku son değer al)
+  df["Stok_num"] = clean_numeric(df[stok_col]) if stok_col else 0.0
+  df["Satis_num"] = clean_numeric(df[satis_col]) if satis_col else 0.0
+  df["Maliyet_num"] = clean_numeric(df[maliyet_col]) if maliyet_col else 0.0
+  df["Fiyat_num"] = clean_numeric(df[fiyat_col]) if fiyat_col else 0.0
+
+  # Id bazlı kümüle gruplama
   id_col = (
       "Id"
       if "Id" in df.columns
@@ -57,15 +77,9 @@ def load_and_aggregate_data(url):
   )
 
   if id_col and id_col in df.columns:
-    agg_rules = {"Stok_num": "last", "Satis_num": "sum"}
+    agg_rules = {"Stok_num": "last", "Satis_num": "sum", "Maliyet_num": "first", "Fiyat_num": "first"}
     for col in df.columns:
-      if col not in [
-          id_col,
-          "Stok_num",
-          "Satis_num",
-          "Stok",
-          "Satış Adeti",
-      ]:
+      if col not in [id_col, "Stok_num", "Satis_num", "Maliyet_num", "Fiyat_num", stok_col, satis_col, maliyet_col, fiyat_col]:
         agg_rules[col] = "first"
 
     df_grouped = df.groupby(id_col, as_index=False).agg(agg_rules)
@@ -77,40 +91,23 @@ def load_and_aggregate_data(url):
 
   df_grouped["Stok"] = df_grouped["Stok_num"]
   df_grouped["Satış Adeti"] = df_grouped["Satis_num"]
-  df_grouped = df_grouped.drop(
-      columns=["Stok_num", "Satis_num"], errors="ignore"
-  )
+  df_grouped["Maliyet"] = df_grouped["Maliyet_num"]
+  df_grouped["İndirimli Fiyat"] = df_grouped["Fiyat_num"]
+  
+  df_grouped = df_grouped.drop(columns=["Stok_num", "Satis_num", "Maliyet_num", "Fiyat_num"], errors="ignore")
 
-  cost = clean_numeric(
-      df_grouped.get(
-          "Maliyet",
-          df_grouped.get("SMM", df_grouped.get("Cost", pd.Series([0] * len(df_grouped)))),
-      )
-  )
-  current_price = clean_numeric(
-      df_grouped.get(
-          "İndirimli Fiyat",
-          df_grouped.get(
-              "PSF DEĞERİ",
-              df_grouped.get("Mevcut Fiyat", df_grouped.get("İlk Fiyat", pd.Series([0] * len(df_grouped)))),
-          ),
-      )
-  )
+  # Metrik Hesaplamaları
   stock_qty = df_grouped["Stok"]
   total_sales = df_grouped["Satış Adeti"]
+  cost = df_grouped["Maliyet"]
+  current_price = df_grouped["İndirimli Fiyat"]
 
-  df_grouped["Maliyet"] = cost
-  df_grouped["İndirimli Fiyat"] = current_price
-
-  # Metrik Hesaplamaları (Kümüle Veri Üzerinden)
   active_weeks = 1.0
   weekly_sales_rate = total_sales / active_weeks
   wos = np.where(weekly_sales_rate == 0, 99.0, stock_qty / weekly_sales_rate)
 
   inventory_cost = stock_qty * cost
-  realized_profit = clean_numeric(
-      df_grouped.get("Satılan Net Kâr", (current_price - cost) * total_sales)
-  )
+  realized_profit = (current_price - cost) * total_sales
   gmroi = np.where(inventory_cost > 0, realized_profit / inventory_cost, 0.0)
 
   min_allowable_price = cost * 1.20
@@ -156,7 +153,6 @@ def load_and_aggregate_data(url):
   )
   discount_rate = np.maximum(0.0, discount_rate)
 
-  # Sütunları tabloya ekle
   df_grouped["Haftalık Satış Hızı"] = np.round(weekly_sales_rate, 2)
   df_grouped["Stok Ömrü (WOS)"] = np.round(wos, 1)
   df_grouped["Brüt Kâr (TL)"] = np.round(realized_profit, 2)
@@ -170,12 +166,10 @@ def load_and_aggregate_data(url):
 
 
 try:
-  df_result = load_and_aggregate_data(SHEET_URL)
+  df_result = load_and_process_data(SHEET_URL)
   st.success("Veriler Id bazlı kümüle edildi ve başarıyla yüklendi!")
 
-  # Sol Menü Filtre Paneli
   st.sidebar.subheader("Filtreleme Paneli")
-
   id_col = (
       "Id"
       if "Id" in df_result.columns
@@ -201,7 +195,6 @@ try:
 
   df_filtered = df_filtered.reset_index(drop=True)
 
-  # Üst Dashboard Metrikleri
   col1, col2, col3, col4 = st.columns(4)
   col1.metric("Toplam Çeşit / Id", len(df_filtered))
   col2.metric(
