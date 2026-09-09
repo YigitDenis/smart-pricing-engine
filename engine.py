@@ -225,13 +225,12 @@ try:
         first_week_num = first_row['Hafta_Num']
         last_week_num = last_row['Hafta_Num']
         
-        weeks_in_sales = len(group_sorted['Hafta_Num'].unique())
         total_sales = int(group_sorted['Satis'].sum()) if 'Satis' in group_sorted.columns else 0
         total_ciro = float(group_sorted['Ciro'].sum()) if 'Ciro' in group_sorted.columns else 0.0
         
         obf = round(total_ciro / total_sales, 2) if total_sales > 0 else 0.0
         
-        # Aktif satış süresi: İlk giriş haftasından son giriş haftasına kadar geçen net hafta sayısı (en az 1)
+        # İlk giriş ve son giriş haftası arasındaki net süre üzerinden ortalama satış hesabı
         active_span_weeks = max((last_week_num - first_week_num + 1), 1)
         avg_weekly_sales = round(total_sales / active_span_weeks, 1) if active_span_weeks > 0 else 0.0
         
@@ -399,7 +398,6 @@ try:
         df_filtered = df_filtered[df_filtered['Ürün Sezonu'] == selected_season]
     
     if selected_week != 'Tümü':
-        # Seçilen haftaya göre filtrelenen haftalık verilerden ilgili ID'leri süzüyoruz
         matching_ids = df_data[df_data['Hafta'] == selected_week]['Id_clean'].unique()
         df_filtered = df_filtered[df_filtered['ID'].isin(matching_ids)]
         
@@ -518,7 +516,7 @@ try:
         ).map(
             highlight_sales_stock, subset=['Kümülatif Satış'] if 'Kümülatif Satış' in available_t3_cols else []
         ).map(
-            highlight_stock, subset=['Güncel Stok (Genel Depo)'] if 'Güncel Satış' in available_t3_cols or 'Güncel Stok (Genel Depo)' in available_t3_cols else []
+            highlight_stock, subset=['Güncel Stok (Genel Depo)'] if 'Güncel Stok (Genel Depo)' in available_t3_cols else []
         ).format(format_dict)
         st.dataframe(styled_top10_stock, use_container_width=True, height=450)
         
@@ -541,8 +539,6 @@ try:
         
     with tab5:
         st.subheader("📅 Hafta Bazlı Genel Satış, Ciro ve Stok Özeti")
-        
-        # Hafta bazlı trend için ham df_data üzerinde filtreli ID'leri grupluyoruz
         filtered_ids = df_filtered['ID'].unique()
         df_weekly_trend_source = df_data[df_data['Id_clean'].isin(filtered_ids)]
         
