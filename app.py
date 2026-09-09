@@ -11,6 +11,8 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1VWZsQvYK7CyZQiogmgLiVovufr9
 
 
 def clean_numeric(series):
+  if series is None:
+    return 0.0
   if isinstance(series, (int, float)):
     return float(series)
   if not isinstance(series, pd.Series):
@@ -40,7 +42,8 @@ def load_and_process_data(url):
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
 
-  stok_col, satis_col, maliyet_col, fiyat_col, ilk_fiyat_col, id_col = (
+  stok_col, satis_col, maliyet_col, fiyat_col, ilk_fiyat_col, ciro_col, id_col = (
+      None,
       None,
       None,
       None,
@@ -69,18 +72,22 @@ def load_and_process_data(url):
     elif col_clean in ["maliyet", "smm", "cost"] and not maliyet_col:
       maliyet_col = col
     elif (
-        "indirimli" in col_clean or "psf değeri" in col_clean
+        "indirimli" in col_clean
+        or "psf" in col_clean
+        or "mevcut fiyat" in col_clean
     ) and not fiyat_col:
       fiyat_col = col
-    elif "ilk fiyat" in col_clean or "liste" in col_clean or col_clean == "fiyat":
+    elif "ilk fiyat" in col_clean or "liste" in col_clean:
       ilk_fiyat_col = col
+    elif "ciro" in col_clean or "tutar" in col_clean:
+      ciro_col = col
 
+  # Yedek arama mantığı
   if not id_col:
     for col in df.columns:
-      if "id" in col.lower() or "kod" in col.lower():
+      if "id" in col.lower():
         id_col = col
         break
-
   if not stok_col:
     for col in df.columns:
       if "stok" in col.lower():
@@ -98,12 +105,12 @@ def load_and_process_data(url):
         break
   if not fiyat_col:
     for col in df.columns:
-      if "indirimli" in col.lower():
+      if "fiyat" in col.lower():
         fiyat_col = col
         break
   if not ilk_fiyat_col:
     for col in df.columns:
-      if "ilk" in col.lower() or "fiyat" in col.lower():
+      if "ilk" in col.lower():
         ilk_fiyat_col = col
         break
 
@@ -111,7 +118,10 @@ def load_and_process_data(url):
   df["Satis_num"] = clean_numeric(df[satis_col]) if satis_col else 0.0
   df["Maliyet_num"] = clean_numeric(df[maliyet_col]) if maliyet_col else 0.0
   df["Fiyat_num"] = clean_numeric(df[fiyat_col]) if fiyat_col else 0.0
-  df["Ilk_Fiyat_num"] = clean_numeric(df[ilk_fiyat_col]) if ilk_fiyat_col else df["Fiyat_num"]
+  df["Ilk_Fiyat_num"] = (
+      clean_numeric(df[ilk_fiyat_col]) if ilk_fiyat_col else df["Fiyat_num"]
+  )
+  df["Ciro_num"] = clean_numeric(df[ciro_col]) if ciro_col else 0.0
 
   group_col = id_col if id_col else df.columns[0]
 
@@ -121,6 +131,7 @@ def load_and_process_data(url):
       "Maliyet_num": "first",
       "Fiyat_num": "first",
       "Ilk_Fiyat_num": "first",
+      "Ciro_num": "sum",
   }
   for col in df.columns:
     if col not in [
@@ -130,11 +141,13 @@ def load_and_process_data(url):
         "Maliyet_num",
         "Fiyat_num",
         "Ilk_Fiyat_num",
+        "Ciro_num",
         stok_col,
         satis_col,
         maliyet_col,
         fiyat_col,
         ilk_fiyat_col,
+        ciro_col,
     ]:
       agg_rules[col] = "first"
 
@@ -148,9 +161,22 @@ def load_and_process_data(url):
   df_grouped["Maliyet"] = df_grouped["Maliyet_num"]
   df_grouped["İndirimli Fiyat"] = df_grouped["Fiyat_num"]
   df_grouped["İlk Fiyat"] = df_grouped["Ilk_Fiyat_num"]
+  
+  # Ciro hesaplaması: Eğer tablodan ciro gelmediyse (veya 0 ise) Fiyat x Satış Adeti üzerinden hesapla
+  calculated_ciro = df_grouped["Fiyat_num"] * df_grouped["Satis_num"]
+  df_grouped["Ciro"] = np.where(
+      df_grouped["Ciro_num"] > 0, df_grouped["Ciro_num"], calculated_ciro
+  )
 
   df_grouped = df_grouped.drop(
-      columns=["Stok_num", "Satis_num", "Maliyet_num", "Fiyat_num", "Ilk_Fiyat_num"],
+      columns=[
+          "Stok_num",
+          "Satis_num",
+          "Maliyet_num",
+          "Fiyat_num",
+          "Ilk_Fiyat_num",
+          "Ciro_num",
+      ],
       errors="ignore",
   )
 
@@ -192,10 +218,9 @@ def load_and_process_data(url):
       default="Normal",
   )
 
-  # Mantıklı Fiyat Önerisi:
-  # - Tasfiye ve İndirimde: Mevcut indirimli fiyat üzerinden düşüş
-  # - Fiyat Artır / Koru durumunda: Eğer İlk Fiyat mevcut fiyattan yüksekse İlk Fiyata çek, değilse mevcut fiyatı koru
-  target_increase_price = np.where(first_price > current_price, first_price, current_price)
+  target_increase_price = np.where(
+      first_price > current_price, first_price, current_price
+  )
 
   suggested_price = np.select(
       [mask_liquidation, mask_tier1_discount, mask_high_performer],
@@ -233,7 +258,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("İlk Fiyat ve akıllı fiyatlandırma mantığı başarıyla entegre edildi!")
+  st.success("Veriler ve ciro hesaplamaları başarıyla güncellendi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
@@ -243,7 +268,9 @@ try:
   if search_query:
     df_filtered = df_result[
         df_result.astype(str)
-        .apply(lambda row: row.str.contains(search_query, case=False).any(), axis=1)
+        .apply(
+            lambda row: row.str.contains(search_query, case=False).any(), axis=1
+        )
     ].copy()
   else:
     df_filtered = df_result.copy()
