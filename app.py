@@ -10,6 +10,15 @@ st.title("Akıllı Fiyatlandırma ve Karar Destek Paneli")
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1VWZsQvYK7CyZQiogmgLiVovufr9gnwWboa3sBt17VMA/export?format=csv&gid=0"
 
 
+def format_tl(val):
+  try:
+    val = float(val)
+    # Binlikler nokta, ondalık virgül olacak şekilde formatlama (Örn: 1.999,99 TL)
+    return f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " TL"
+  except:
+    return "0,00 TL"
+
+
 def normalize_text(text):
   return (
       str(text)
@@ -89,7 +98,6 @@ def load_and_process_data(url):
     elif any(k in norm for k in ["ciro", "tutar"]) and not ciro_col:
       ciro_col = col
 
-  # Yedek tarama
   if not id_col:
     for col in df.columns:
       if "id" in normalize_text(col) or "kod" in normalize_text(col):
@@ -127,11 +135,9 @@ def load_and_process_data(url):
   df["Ilk_Fiyat_num"] = clean_numeric(df[ilk_fiyat_col]) if ilk_fiyat_col else 0.0
   df["Fiyat_num"] = clean_numeric(df[fiyat_col]) if fiyat_col else df["Ilk_Fiyat_num"]
 
-  # İlk Fiyat 0 gelirse İndirimli Fiyata eşitle
   df["Ilk_Fiyat_num"] = np.where(
       df["Ilk_Fiyat_num"] == 0, df["Fiyat_num"], df["Ilk_Fiyat_num"]
   )
-  # İndirimli Fiyat 0 gelirse İlk Fiyata eşitle
   df["Fiyat_num"] = np.where(
       df["Fiyat_num"] == 0, df["Ilk_Fiyat_num"], df["Fiyat_num"]
   )
@@ -175,15 +181,16 @@ def load_and_process_data(url):
   df_grouped["Satış Adeti"] = df_grouped["Satis_num"]
   df_grouped["Giriş Adeti"] = df_grouped["Satış Adeti"] + df_grouped["Stok"]
 
-  df_grouped["Maliyet"] = clean_numeric(df_grouped["Maliyet_num"]).astype(str) + " TL"
-  df_grouped["İlk Fiyat"] = clean_numeric(df_grouped["Ilk_Fiyat_num"]).astype(str) + " TL"
-  df_grouped["İndirimli Fiyat"] = clean_numeric(df_grouped["Fiyat_num"]).astype(str) + " TL"
+  # Noktalı TL formatlamaları uyguluyoruz
+  df_grouped["Maliyet"] = df_grouped["Maliyet_num"].apply(format_tl)
+  df_grouped["İlk Fiyat"] = df_grouped["Ilk_Fiyat_num"].apply(format_tl)
+  df_grouped["İndirimli Fiyat"] = df_grouped["Fiyat_num"].apply(format_tl)
 
   calculated_ciro = df_grouped["Fiyat_num"] * df_grouped["Satis_num"]
   final_ciro = np.where(
       df_grouped["Ciro_num"] > 0, df_grouped["Ciro_num"], calculated_ciro
   )
-  df_grouped["Ciro"] = pd.Series(final_ciro).astype(str) + " TL"
+  df_grouped["Ciro"] = pd.Series(final_ciro).apply(format_tl)
 
   raw_discount = np.where(
       df_grouped["Ilk_Fiyat_num"] > 0,
@@ -270,13 +277,13 @@ def load_and_process_data(url):
 
   df_grouped["Haftalık Satış Hızı"] = np.round(weekly_sales_rate, 2)
   df_grouped["Stok Ömrü (WOS)"] = np.round(wos, 1)
-  df_grouped["Brüt Kâr (TL)"] = np.round(realized_profit, 2)
+  df_grouped["Brüt Kâr (TL)"] = np.round(realized_profit, 2).apply(
+      lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " TL"
+  )
   df_grouped["GMROI Verimliliği"] = np.round(gmroi, 2)
   df_grouped["Önerilen Aksiyon"] = action
   df_grouped["Aciliyet Seviyesi"] = urgency
-  df_grouped["Önerilen Yeni Fiyat (TL)"] = (
-      np.round(suggested_price, 2).astype(str) + " TL"
-  )
+  df_grouped["Önerilen Yeni Fiyat (TL)"] = np.round(suggested_price, 2).apply(format_tl)
   df_grouped["Önerilen İndirim (%)"] = np.where(
       current_price > 0,
       np.round((1 - (suggested_price / current_price)) * 100, 2),
@@ -322,7 +329,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Fiyatlar, indirim oranları ve sütunlar başarıyla hizalandı!")
+  st.success("Ciro ve fiyat formatları noktalı olarak güncellendi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
