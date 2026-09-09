@@ -24,7 +24,7 @@ def format_tl(val):
 def format_percentage(val):
   try:
     val = float(val)
-    if 0 <= val <= 1:
+    if 0 < val <= 1:
       val = val * 100
     return (
         "%"
@@ -95,7 +95,6 @@ def load_and_process_data(url):
   original_columns = list(df.columns)
   cols_list = list(df.columns)
 
-  # Sütunları hem isme hem de pozisyona (indis) göre kesin olarak eşleştiriyoruz
   id_col, stok_col, satis_col, maliyet_col, ilk_fiyat_col, indirimli_col, ciro_col, indirim_oran_col = (
       None,
       None,
@@ -119,34 +118,24 @@ def load_and_process_data(url):
       maliyet_col = col
     elif "ilk" in c and not ilk_fiyat_col:
       ilk_fiyat_col = col
-    elif ("indirimli" in c or "psf" in c) and not indirimli_col:
+    elif "indirimli" in c and not indirimli_col:
       indirimli_col = col
     elif any(k in c for k in ["ciro", "tutar"]) and not ciro_col:
       ciro_col = col
     elif "oran" in c and not indirim_oran_col:
       indirim_oran_col = col
 
-  # Yedek konum tabanlı eşleştirme (E-tablodaki standart sütun sırasına göre)
+  # Konum bazlı emniyet eşleştirmesi
   if not id_col and len(cols_list) > 1:
     id_col = cols_list[1]
   if not maliyet_col and len(cols_list) > 11:
-    maliyet_col = cols_list[11]  # Genelde L sütunu Maliyet
+    maliyet_col = cols_list[11]
   if not ilk_fiyat_col and len(cols_list) > 12:
-    ilk_fiyat_col = cols_list[12]  # Genelde M sütunu İlk Fiyat
+    ilk_fiyat_col = cols_list[12]
   if not indirimli_col and len(cols_list) > 13:
-    indirimli_col = cols_list[13]  # Genelde N sütunu İndirimli Fiyat
+    indirimli_col = cols_list[13]
   if not indirim_oran_col and len(cols_list) > 14:
-    indirim_oran_col = cols_list[14]  # Genelde O sütunu İndirim Oranı
-
-  # Hala bulunamadıysa genel arama yap
-  for c in cols_list:
-    cn = sanitize_name(c)
-    if not stok_col and "stok" in cn:
-      stok_col = c
-    if not satis_col and "satis" in cn:
-      satis_col = c
-    if not ciro_col and "ciro" in cn:
-      ciro_col = c
+    indirim_oran_col = cols_list[14]
 
   df["Stok_num"] = clean_numeric(df[stok_col]) if stok_col else 0.0
   df["Satis_num"] = clean_numeric(df[satis_col]) if satis_col else 0.0
@@ -289,7 +278,7 @@ def load_and_process_data(url):
       0.0,
   )
 
-  # Değerleri ve formatları işliyoruz
+  # Değerleri ve formatları doğru sütunlara işliyoruz
   if ciro_col and ciro_col in df_grouped.columns:
     df_grouped[ciro_col] = pd.Series(raw_ciro).apply(format_tl)
   else:
@@ -365,7 +354,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Tüm fiyat ve indirim sütunları konum tabanlı olarak bağlandı!")
+  st.success("Fiyatlar ve indirim oranları doğru sütunlarla eşleştirildi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
