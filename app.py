@@ -13,7 +13,6 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1VWZsQvYK7CyZQiogmgLiVovufr9
 def format_tl(val):
   try:
     val = float(val)
-    # Binlikler nokta, ondalık virgül olacak şekilde formatlama (Örn: 1.999,99 TL)
     return f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " TL"
   except:
     return "0,00 TL"
@@ -277,13 +276,14 @@ def load_and_process_data(url):
 
   df_grouped["Haftalık Satış Hızı"] = np.round(weekly_sales_rate, 2)
   df_grouped["Stok Ömrü (WOS)"] = np.round(wos, 1)
-  df_grouped["Brüt Kâr (TL)"] = np.round(realized_profit, 2).apply(
-      lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " TL"
-  )
+  
+  # Pandas Series üzerinden güvenli formatlama (Hata çözüldü)
+  df_grouped["Brüt Kâr (TL)"] = pd.Series(realized_profit).apply(format_tl)
+  
   df_grouped["GMROI Verimliliği"] = np.round(gmroi, 2)
   df_grouped["Önerilen Aksiyon"] = action
   df_grouped["Aciliyet Seviyesi"] = urgency
-  df_grouped["Önerilen Yeni Fiyat (TL)"] = np.round(suggested_price, 2).apply(format_tl)
+  df_grouped["Önerilen Yeni Fiyat (TL)"] = pd.Series(suggested_price).apply(format_tl)
   df_grouped["Önerilen İndirim (%)"] = np.where(
       current_price > 0,
       np.round((1 - (suggested_price / current_price)) * 100, 2),
@@ -329,7 +329,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Ciro ve fiyat formatları noktalı olarak güncellendi!")
+  st.success("Hata giderildi, tablo ve formatlar başarıyla yüklendi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
