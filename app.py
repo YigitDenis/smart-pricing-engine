@@ -18,6 +18,9 @@ def clean_numeric(series):
 
   cleaned = (
       series.astype(str)
+      .str.upper()
+      .str.replace("TRY", "", regex=False)
+      .str.replace("TL", "", regex=False)
       .str.strip()
       .str.replace(".", "", regex=False)
       .str.replace(",", ".", regex=False)
@@ -34,12 +37,10 @@ def load_and_process_data(url):
 
   df.columns = df.columns.str.strip()
 
-  # Hafta sütununu temizle
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
 
-  # Sütun tespiti
-  stok_col, satis_col, maliyet_col, fiyat_col, filter_target_col = (
+  stok_col, satis_col, maliyet_col, fiyat_col, code_col = (
       None,
       None,
       None,
@@ -48,30 +49,51 @@ def load_and_process_data(url):
   )
 
   for col in df.columns:
-    col_lower = col.lower()
+    col_clean = col.lower()
     if (
-        "ürün kodu" in col_lower
-        or "urun kodu" in col_lower
-        and not filter_target_col
-    ):
-      filter_target_col = col
-    elif "stok" in col_lower and not stok_col:
+        "ürün kodu" in col_clean
+        or "urun kodu" in col_clean
+        or col_clean == "id"
+    ) and not code_col:
+      code_col = col
+    elif col_clean in ["stok", "stok adedi"] and not stok_col:
       stok_col = col
-    elif ("satış adeti" in col_lower or "satis adeti" in col_lower) and not satis_col:
-      satis_col = col
     elif (
-        "maliyet" in col_lower or "smm" in col_lower or "cost" in col_lower
-    ) and not maliyet_col:
+        col_clean in ["satış adeti", "satis adeti", "satış adedi"]
+        and not satis_col
+    ):
+      satis_col = col
+    elif col_clean in ["maliyet", "smm", "cost"] and not maliyet_col:
       maliyet_col = col
     elif (
-        "indirimli" in col_lower or "psf" in col_lower or "fiyat" in col_lower
+        "indirimli" in col_clean or "psf" in col_clean or "fiyat" in col_clean
     ) and not fiyat_col:
       fiyat_col = col
 
-  if not filter_target_col:
+  if not code_col:
     for col in df.columns:
-      if "id" in col.lower():
-        filter_target_col = col
+      if "kod" in col.lower() or "id" in col.lower():
+        code_col = col
+        break
+  if not stok_col:
+    for col in df.columns:
+      if "stok" in col.lower():
+        stok_col = col
+        break
+  if not satis_col:
+    for col in df.columns:
+      if "satış" in col.lower() or "satis" in col.lower():
+        satis_col = col
+        break
+  if not maliyet_col:
+    for col in df.columns:
+      if "maliyet" in col.lower() or "smm" in col.lower():
+        maliyet_col = col
+        break
+  if not fiyat_col:
+    for col in df.columns:
+      if "fiyat" in col.lower() or "psf" in col.lower():
+        fiyat_col = col
         break
 
   df["Stok_num"] = clean_numeric(df[stok_col]) if stok_col else 0.0
@@ -79,8 +101,7 @@ def load_and_process_data(url):
   df["Maliyet_num"] = clean_numeric(df[maliyet_col]) if maliyet_col else 0.0
   df["Fiyat_num"] = clean_numeric(df[fiyat_col]) if fiyat_col else 0.0
 
-  # Id veya Ürün Kodu bazlı kümüle gruplama
-  group_col = filter_target_col if filter_target_col else df.columns[0]
+  group_col = code_col if code_col else df.columns[0]
 
   agg_rules = {
       "Stok_num": "last",
@@ -194,7 +215,7 @@ try:
   if group_col and group_col in df_result.columns:
     unique_codes = df_result[group_col].dropna().unique().tolist()
     selected_code = st.sidebar.selectbox(
-        f"{group_col} Seçin", ["Tümü"] + [str(x) for x in unique_codes]
+        "Ürün Kodu Seçin", ["Tümü"] + [str(x) for x in unique_codes]
     )
 
   if selected_code != "Tümü":
