@@ -109,40 +109,26 @@ def load_and_process_data(url):
       None,
   )
 
-  for col in cols_list:
-    c = sanitize_name(col)
-    if c in ["id", "urun kodu", "urun_kodu"] and not id_col:
-      id_col = col
-    elif "stok" in c and not stok_col:
-      stok_col = col
-    elif "satis" in c and not satis_col:
-      satis_col = col
-    elif any(k in c for k in ["maliyet", "smm", "cost"]) and not maliyet_col:
-      maliyet_col = col
-    elif "ilk fiyat" in c or (
-        "ilk" in c and "fiyat" in c and not ilk_fiyat_col
-    ):
-      ilk_fiyat_col = col
-    elif "indirimli" in c and not indirimli_col:
-      indirimli_col = col
-    elif any(k in c for k in ["ciro", "tutar"]) and not ciro_col:
-      ciro_col = col
-    elif any(k in c for k in ["oran", "indirim oran"]) and not indirim_oran_col:
-      indirim_oran_col = col
-
-  if not id_col and len(cols_list) > 1:
+  # Sütunları pozisyonlarına (indislerine) göre kilitliyoruz (Görselindeki sıralama esastır)
+  # A: Hafta(silindi), B: Id, C: Ana Kategori, D: Ürün Kodu, E: Ürün Adı, F: Renk Kodu, G: Renk Açıklaması, H: Satış Adeti, I: Stok, J: Ciro, K: Ürün Açıklama, L: Maliyet, M: İlk Fiyat, N: İndirimli Fiyat, O: İndirim Oranı
+  if len(cols_list) > 1:
     id_col = cols_list[1]
-  if not ciro_col and len(cols_list) >= 10:
-    ciro_col = cols_list[9]
-  if not maliyet_col and len(cols_list) >= 12:
-    maliyet_col = cols_list[11]
-  if not ilk_fiyat_col and len(cols_list) >= 13:
-    ilk_fiyat_col = cols_list[12]
-  if not indirimli_col and len(cols_list) >= 14:
-    indirimli_col = cols_list[13]
-  if not indirim_oran_col and len(cols_list) >= 15:
-    indirim_oran_col = cols_list[14]
+  if len(cols_list) > 7:
+    satis_col = cols_list[7]  # H sütunu Satış Adeti
+  if len(cols_list) > 8:
+    stok_col = cols_list[8]  # I sütunu Stok
+  if len(cols_list) > 9:
+    ciro_col = cols_list[9]  # J sütunu Ciro
+  if len(cols_list) > 11:
+    maliyet_col = cols_list[11]  # L sütunu Maliyet
+  if len(cols_list) > 12:
+    ilk_fiyat_col = cols_list[12]  # M sütunu İlk Fiyat
+  if len(cols_list) > 13:
+    indirimli_col = cols_list[13]  # N sütunu İndirimli Fiyat
+  if len(cols_list) > 14:
+    indirim_oran_col = cols_list[14]  # O sütunu İndirim Oranı
 
+  # Ham verileri doğrudan ilgili sütun indekslerinden alıyoruz
   df["Stok_num"] = pd.to_numeric(
       df[stok_col].astype(str).str.replace(",", "."), errors="coerce"
   ).fillna(0)
@@ -187,13 +173,6 @@ def load_and_process_data(url):
         "Raw_Indirimli_Fiyat",
         "Raw_Ciro",
         "Raw_Indirim_Orani",
-        stok_col,
-        satis_col,
-        maliyet_col,
-        ilk_fiyat_col,
-        indirimli_col,
-        ciro_col,
-        indirim_oran_col,
     ]:
       agg_rules[col] = "first"
 
@@ -275,31 +254,21 @@ def load_and_process_data(url):
       0.0,
   )
 
-  target_ciro_col = ciro_col if ciro_col else "Ciro"
-  df_grouped[target_ciro_col] = pd.Series(final_ciro_vals).apply(format_tl)
-
-  target_maliyet_col = maliyet_col if maliyet_col else "Maliyet"
-  df_grouped[target_maliyet_col] = df_grouped["Raw_Maliyet"].apply(format_tl)
-
-  target_ilk_col = ilk_fiyat_col if ilk_fiyat_col else "İlk Fiyat"
-  df_grouped[target_ilk_col] = df_grouped["Raw_Ilk_Fiyat"].apply(format_tl)
-
-  target_indirimli_col = (
-      indirimli_col
-      if indirimli_col
-      and indirimli_col in df_grouped.columns
-      else "İndirimli Fiyat"
-  )
-  df_grouped[target_indirimli_col] = df_grouped["Raw_Indirimli_Fiyat"].apply(
-      format_tl
-  )
-
-  target_oran_col = (
-      indirim_oran_col if indirim_oran_col else "İndirim Oranı"
-  )
-  df_grouped[target_oran_col] = df_grouped["Raw_Indirim_Orani"].apply(
-      format_percentage
-  )
+  # Değerleri ve formatları doğru sütunlara yazıyoruz
+  if ciro_col:
+    df_grouped[ciro_col] = pd.Series(final_ciro_vals).apply(format_tl)
+  if maliyet_col:
+    df_grouped[maliyet_col] = df_grouped["Raw_Maliyet"].apply(format_tl)
+  if ilk_fiyat_col:
+    df_grouped[ilk_fiyat_col] = df_grouped["Raw_Ilk_Fiyat"].apply(format_tl)
+  if indirimli_col:
+    df_grouped[indirimli_col] = df_grouped["Raw_Indirimli_Fiyat"].apply(
+        format_tl
+    )
+  if indirim_oran_col:
+    df_grouped[indirim_oran_col] = df_grouped["Raw_Indirim_Orani"].apply(
+        format_percentage
+    )
 
   df_grouped["Haftalık Satış Hızı"] = np.round(weekly_sales_rate, 2)
   df_grouped["Stok Ömrü (WOS)"] = np.round(wos, 1)
@@ -351,7 +320,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Tüm veriler hatasız şekilde yüklendi!")
+  st.success("Tüm sütunlar ve fiyatlar e-tablo sırasına göre sabitlendi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
