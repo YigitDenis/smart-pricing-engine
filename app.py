@@ -73,7 +73,7 @@ def load_and_process_data(url):
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
 
-  stok_col, satis_col, maliyet_col, fiyat_col, ilk_fiyat_col, ciro_col, id_col = (
+  stok_col, satis_col, maliyet_col, indirimli_fiyat_col, ilk_fiyat_col, ciro_col, id_col = (
       None,
       None,
       None,
@@ -93,13 +93,12 @@ def load_and_process_data(url):
       satis_col = col
     elif any(k in norm for k in ["maliyet", "smm", "cost"]) and not maliyet_col:
       maliyet_col = col
-    elif "ilk" in norm and "fiyat" in norm and not ilk_fiyat_col:
-      ilk_fiyat_col = col
-    elif (
-        any(k in norm for k in ["indirimli", "psf", "mevcut fiyat"])
-        and not fiyat_col
+    elif "ilk fiyat" in norm or (
+        "ilk" in norm and "fiyat" in norm and not ilk_fiyat_col
     ):
-      fiyat_col = col
+      ilk_fiyat_col = col
+    elif "indirimli fiyat" in norm or "indirimli" in norm or "psf" in norm:
+      indirimli_fiyat_col = col
     elif any(k in norm for k in ["ciro", "tutar"]) and not ciro_col:
       ciro_col = col
 
@@ -128,10 +127,10 @@ def load_and_process_data(url):
       if "ilk" in normalize_text(col):
         ilk_fiyat_col = col
         break
-  if not fiyat_col:
+  if not indirimli_fiyat_col:
     for col in df.columns:
-      if "fiyat" in normalize_text(col) or "psf" in normalize_text(col):
-        fiyat_col = col
+      if "indirimli" in normalize_text(col) or "psf" in normalize_text(col):
+        indirimli_fiyat_col = col
         break
 
   df["Stok_num"] = clean_numeric(df[stok_col]) if stok_col else 0.0
@@ -140,15 +139,18 @@ def load_and_process_data(url):
   df["Ilk_Fiyat_num"] = (
       clean_numeric(df[ilk_fiyat_col]) if ilk_fiyat_col else 0.0
   )
-  df["Fiyat_num"] = (
-      clean_numeric(df[fiyat_col]) if fiyat_col else df["Ilk_Fiyat_num"]
+  df["Indirimli_Fiyat_num"] = (
+      clean_numeric(df[indirimli_fiyat_col])
+      if indirimli_fiyat_col
+      else df["Ilk_Fiyat_num"]
   )
 
+  # Eksik kalan fiyatları birbirine tamamlama
   df["Ilk_Fiyat_num"] = np.where(
-      df["Ilk_Fiyat_num"] == 0, df["Fiyat_num"], df["Ilk_Fiyat_num"]
+      df["Ilk_Fiyat_num"] == 0, df["Indirimli_Fiyat_num"], df["Ilk_Fiyat_num"]
   )
-  df["Fiyat_num"] = np.where(
-      df["Fiyat_num"] == 0, df["Ilk_Fiyat_num"], df["Fiyat_num"]
+  df["Indirimli_Fiyat_num"] = np.where(
+      df["Indirimli_Fiyat_num"] == 0, df["Ilk_Fiyat_num"], df["Indirimli_Fiyat_num"]
   )
 
   df["Ciro_num"] = clean_numeric(df[ciro_col]) if ciro_col else 0.0
@@ -160,7 +162,7 @@ def load_and_process_data(url):
       "Satis_num": "sum",
       "Maliyet_num": "first",
       "Ilk_Fiyat_num": "first",
-      "Fiyat_num": "first",
+      "Indirimli_Fiyat_num": "first",
       "Ciro_num": "sum",
   }
   for col in df.columns:
@@ -170,12 +172,12 @@ def load_and_process_data(url):
         "Satis_num",
         "Maliyet_num",
         "Ilk_Fiyat_num",
-        "Fiyat_num",
+        "Indirimli_Fiyat_num",
         "Ciro_num",
         stok_col,
         satis_col,
         maliyet_col,
-        fiyat_col,
+        indirimli_fiyat_col,
         ilk_fiyat_col,
         ciro_col,
     ]:
@@ -192,7 +194,7 @@ def load_and_process_data(url):
 
   raw_cost = df_grouped["Maliyet_num"]
   raw_first_price = df_grouped["Ilk_Fiyat_num"]
-  raw_current_price = df_grouped["Fiyat_num"]
+  raw_current_price = df_grouped["Indirimli_Fiyat_num"]
 
   calculated_ciro = raw_current_price * df_grouped["Satış Adeti"]
   raw_ciro = np.where(
@@ -205,7 +207,6 @@ def load_and_process_data(url):
       0.0,
   )
 
-  # HAM HESAPLAMALAR (Algoritma düzgün çalışsın diye)
   stock_qty = df_grouped["Stok"]
   total_sales = df_grouped["Satış Adeti"]
 
@@ -269,7 +270,6 @@ def load_and_process_data(url):
       0.0,
   )
 
-  # EKRAN VE EXCEL İÇİN GÖRSEL FORMATLAMALAR
   df_grouped["Ciro"] = pd.Series(raw_ciro).apply(format_tl)
   df_grouped["Maliyet"] = raw_cost.apply(format_tl)
   df_grouped["İlk Fiyat"] = raw_first_price.apply(format_tl)
@@ -294,14 +294,13 @@ def load_and_process_data(url):
           "Stok_num",
           "Satis_num",
           "Maliyet_num",
-          "Fiyat_num",
           "Ilk_Fiyat_num",
+          "Indirimli_Fiyat_num",
           "Ciro_num",
       ],
       errors="ignore",
   )
 
-  # İSTEDİĞİN SÜTUN SIRALAMASI
   base_cols = [
       c
       for c in df_grouped.columns
@@ -340,9 +339,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success(
-      "Sıralama ve hesaplama motoru tam doğru verilere göre güncellendi!"
-  )
+  st.success("İlk fiyat ve indirimli fiyat sütunları başarıyla ayrıştırıldı!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
