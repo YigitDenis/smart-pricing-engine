@@ -2,13 +2,14 @@ import pandas as pd
 
 def calculate_smart_pricing(row):
     """
-    Maliyet, son hafta stoğu, son hafta satışı ve ilk fiyata göre
+    Maliyet, stok, satış ve fiyat sütunlarını esnek bir şekilde okuyarak 
     akıllı indirim veya fiyat artış kararı veren motor.
     """
-    cost = row['Maliyet']
-    current_price = row['Mevcut Fiyat']
-    stock_qty = row['Stok']
-    weekly_sales = row['Satış Adeti']
+    # Sütun adlarındaki olası farklılıklar için güvenli okuma (fallback)
+    cost = float(row.get('Maliyet', row.get('Cost', 0)) or 0)
+    current_price = float(row.get('Mevcut Fiyat', row.get('İlk Fiyat', row.get('Fiyat', 0))) or 0)
+    stock_qty = float(row.get('Stok', row.get('Stok Adedi', 0)) or 0)
+    weekly_sales = float(row.get('Satış Adeti', row.get('Haftalık Satış', 0)) or 0)
     
     # Mutlak Taban Sınır (Stop-Loss): Mark-up en az 1.2 olmalı
     min_allowable_price = cost * 1.20
