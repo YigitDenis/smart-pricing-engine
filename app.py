@@ -89,7 +89,6 @@ def load_and_process_data(url):
 
   df.columns = [str(c).strip().replace("\xa0", " ") for c in df.columns]
 
-  # Hafta sütununu güvenle kaldırıyoruz
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
   else:
@@ -99,7 +98,6 @@ def load_and_process_data(url):
 
   cols_list = list(df.columns)
 
-  # Sütun tespiti
   id_col, stok_col, satis_col, maliyet_col, ilk_fiyat_col, indirimli_col, ciro_col, indirim_oran_col = (
       None,
       None,
@@ -132,7 +130,6 @@ def load_and_process_data(url):
     elif any(k in c for k in ["oran", "indirim oran"]) and not indirim_oran_col:
       indirim_oran_col = col
 
-  # Konum bazlı mutlak garantiler (Senin görselindeki sıra: Maliyet, İlk Fiyat, İndirimli Fiyat, İndirim Oranı)
   if not id_col and len(cols_list) > 1:
     id_col = cols_list[1]
   if not ciro_col and len(cols_list) >= 10:
@@ -142,11 +139,10 @@ def load_and_process_data(url):
   if not ilk_fiyat_col and len(cols_list) >= 13:
     ilk_fiyat_col = cols_list[12]
   if not indirimli_col and len(cols_list) >= 14:
-    indirimli_col = cols_list[13]  # 13. Sütun İndirimli Fiyat
+    indirimli_col = cols_list[13]
   if not indirim_oran_col and len(cols_list) >= 15:
     indirim_oran_col = cols_list[14]
 
-  # Ham verileri saklıyoruz
   df["Stok_num"] = pd.to_numeric(
       df[stok_col].astype(str).str.replace(",", "."), errors="coerce"
   ).fillna(0)
@@ -166,7 +162,6 @@ def load_and_process_data(url):
   df["Indirimli_val"] = df["Raw_Indirimli_Fiyat"].apply(parse_money)
   df["Ciro_val"] = df["Raw_Ciro"].apply(parse_money)
 
-  # Gruplama kuralı
   agg_rules = {
       "Stok_num": "last",
       "Satis_num": "sum",
@@ -280,7 +275,6 @@ def load_and_process_data(url):
       0.0,
   )
 
-  # Ham verileri formatlayıp ilgili sütun adlarına doğrudan yazıyoruz
   target_ciro_col = ciro_col if ciro_col else "Ciro"
   df_grouped[target_ciro_col] = pd.Series(final_ciro_vals).apply(format_tl)
 
@@ -290,7 +284,6 @@ def load_and_process_data(url):
   target_ilk_col = ilk_fiyat_col if ilk_fiyat_col else "İlk Fiyat"
   df_grouped[target_ilk_col] = df_grouped["Raw_Ilk_Fiyat"].apply(format_tl)
 
-  # İNDİRİMLİ FİYAT KESİN ATAMA
   target_indirimli_col = (
       indirimli_col
       if indirimli_col
@@ -319,7 +312,6 @@ def load_and_process_data(url):
   )
   df_grouped["Önerilen İndirim (%)"] = suggested_discount
 
-  # Geçici sayısal sütunları temizle
   drop_cols = [
       "Stok_num",
       "Satis_num",
@@ -334,7 +326,6 @@ def load_and_process_data(url):
   ]
   df_grouped = df_grouped.drop(columns=drop_cols, errors="ignore")
 
-  # Orijinal sütun sırasını koruma
   original_cols_clean = [
       c for c in cols_list if c != "Hafta" and c in df_grouped.columns
   ]
@@ -360,9 +351,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success(
-      "İndirimli Fiyat sütunu ve tüm finansal veriler eksiksiz yüklendi!"
-  )
+  st.success("Tüm veriler hatasız şekilde yüklendi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
@@ -432,4 +421,4 @@ try:
   )
 
 except Exception as e:
-  st.error(f"Hata oluştu: {e}")s
+  st.error(f"Hata oluştu: {e}")
