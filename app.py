@@ -20,7 +20,6 @@ def parse_money(val):
 
   s = s.replace("TRY", "").replace("TL", "").replace("₺", "").replace(" ", "")
 
-  # Hem 1.299,90 hem 1299.90 destekle
   if "," in s and "." in s:
     if s.rfind(",") > s.rfind("."):
       s = s.replace(".", "").replace(",", ".")
@@ -130,18 +129,18 @@ def load_and_process_data(url):
     ):
       ilk_fiyat_col = col
     elif (
-        "indirimli fiyat" in c
-        or "indirimli" in c
-        or ("fiyat" in c and "ilk" not in c and not indirimli_col)
+        "indirimli" in c
+        or "psf" in c
+        or ("fiyat" in c and "ilk" not in c and "oran" not in c)
     ):
-      if not indirimli_col and "oran" not in c:
+      if not indirimli_col:
         indirimli_col = col
     elif any(k in c for k in ["ciro", "tutar"]) and not ciro_col:
       ciro_col = col
     elif any(k in c for k in ["oran", "indirim oran"]) and not indirim_oran_col:
       indirim_oran_col = col
 
-  # Konum bazlı emniyet garantileri (E-tablodaki sütun sırasına göre)
+  # Konum bazlı mutlak emniyet garantileri (E-tablodaki standart sütun dizilimi)
   if not id_col and len(cols_list) > 1:
     id_col = cols_list[1]
   if not ciro_col and len(cols_list) >= 10:
@@ -151,7 +150,7 @@ def load_and_process_data(url):
   if not ilk_fiyat_col and len(cols_list) >= 13:
     ilk_fiyat_col = cols_list[12]
   if not indirimli_col and len(cols_list) >= 14:
-    indirimli_col = cols_list[13]
+    indirimli_col = cols_list[13]  # İndirimli Fiyat sütunu garantisi
   if not indirim_oran_col and len(cols_list) >= 15:
     indirim_oran_col = cols_list[14]
 
@@ -170,7 +169,6 @@ def load_and_process_data(url):
 
   group_col = id_col if id_col else cols_list[0]
 
-  # Kusursuz parse_money fonksiyonunu kullanıyoruz
   df["Maliyet_val"] = df["Raw_Maliyet"].apply(parse_money)
   df["Indirimli_val"] = df["Raw_Indirimli_Fiyat"].apply(parse_money)
   df["Ciro_val"] = df["Raw_Ciro"].apply(parse_money)
@@ -362,7 +360,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Tüm para birimleri, fiyatlar ve analiz motoru başarıyla yüklendi!")
+  st.success("İndirimli fiyat sütunu ve tüm veriler başarıyla bağlandı!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
