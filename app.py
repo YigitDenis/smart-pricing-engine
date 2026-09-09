@@ -128,7 +128,7 @@ def load_and_process_data(url):
     elif any(k in c for k in ["oran", "indirim oran"]) and not indirim_oran_col:
       indirim_oran_col = col
 
-  # Konum bazlı emniyet garantileri
+  # Konum bazlı emniyet garantileri (E-tablodaki sütun sırasına göre)
   if not id_col and len(cols_list) > 1:
     id_col = cols_list[1]
   if not ciro_col and len(cols_list) >= 10:
@@ -142,6 +142,7 @@ def load_and_process_data(url):
   if not indirim_oran_col and len(cols_list) >= 15:
     indirim_oran_col = cols_list[14]
 
+  # Ham sayısal veriler
   df["Stok_num"] = pd.to_numeric(
       df[stok_col].astype(str).str.replace(",", "."), errors="coerce"
   ).fillna(0)
@@ -157,6 +158,7 @@ def load_and_process_data(url):
 
   group_col = id_col if id_col else cols_list[0]
 
+  # Sayısal değerlerin temizlenmesi (Güvenli parse)
   df["Maliyet_val"] = (
       df["Raw_Maliyet"]
       .astype(str)
@@ -239,9 +241,14 @@ def load_and_process_data(url):
       df_grouped["Ciro_val"] > 0, df_grouped["Ciro_val"], calculated_ciro
   )
 
+  # WOS hesaplaması (Satış hızı 0 ise stok ömrü 99 olarak güvenle sabitlenir)
   active_weeks = 1.0
   weekly_sales_rate = total_sales / active_weeks
-  wos = np.where(weekly_sales_rate == 0, 99.0, stock_qty / weekly_sales_rate)
+  wos = np.where(
+      (weekly_sales_rate == 0) | pd.isna(weekly_sales_rate),
+      99.0,
+      stock_qty / weekly_sales_rate,
+  )
 
   inventory_cost = stock_qty * raw_cost
   realized_profit = (raw_current_price - raw_cost) * total_sales
@@ -271,6 +278,7 @@ def load_and_process_data(url):
       default="Normal",
   )
 
+  # Önerilen fiyat hesaplamasının patlamaması için mantıksal sınır
   target_increase_price = raw_current_price
   suggested_price = np.select(
       [mask_liquidation, mask_tier1_discount, mask_high_performer],
@@ -294,7 +302,7 @@ def load_and_process_data(url):
       0.0,
   )
 
-  # Değerleri ve formatları işliyoruz
+  # Orijinal tablo sütunlarını güvenle işliyoruz
   if ciro_col and ciro_col in df_grouped.columns:
     df_grouped[ciro_col] = pd.Series(final_ciro_vals).apply(format_tl)
   else:
@@ -379,7 +387,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Tüm isteklerin doğrulanarak rapora yansıtıldı!")
+  st.success("Tüm veriler, stok ömrü ve fiyatlar tamamen düzeltildi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
