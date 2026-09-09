@@ -38,7 +38,7 @@ def load_and_process_data(url):
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
 
-  # Sütun adlarını esnek ve garantili bulma (Esnek Eşleştirme)
+  # Sütun adlarını esnek eşleştirme
   stok_col, satis_col, maliyet_col, fiyat_col = None, None, None, None
 
   for col in df.columns:
@@ -49,7 +49,7 @@ def load_and_process_data(url):
       satis_col = col
     elif ("maliyet" in col_lower or "smm" in col_lower or "cost" in col_lower) and not maliyet_col:
       maliyet_col = col
-    elif ("indirim" in col_lower or "psf" in col_lower or "fiyat" in col_lower) and not fiyat_col:
+    elif ("indirimli" in col_lower or "psf" in col_lower or "fiyat" in col_lower) and not fiyat_col:
       fiyat_col = col
 
   df["Stok_num"] = clean_numeric(df[stok_col]) if stok_col else 0.0
@@ -72,7 +72,17 @@ def load_and_process_data(url):
         "Fiyat_num": "first",
     }
     for col in df.columns:
-      if col not in [id_col, "Stok_num", "Satis_num", "Maliyet_num", "Fiyat_num", stok_col, satis_col, maliyet_col, fiyat_col]:
+      if col not in [
+          id_col,
+          "Stok_num",
+          "Satis_num",
+          "Maliyet_num",
+          "Fiyat_num",
+          stok_col,
+          satis_col,
+          maliyet_col,
+          fiyat_col,
+      ]:
         agg_rules[col] = "first"
 
     df_grouped = df.groupby(id_col, as_index=False).agg(agg_rules)
@@ -162,7 +172,7 @@ def load_and_process_data(url):
 
 try:
   df_result = load_and_process_data(SHEET_URL)
-  st.success("Veriler başarıyla yüklendi ve analiz edildi!")
+  st.success("Veriler Id bazlı kümüle edildi ve başarıyla yüklendi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   filter_col = None
@@ -240,4 +250,4 @@ try:
   )
 
 except Exception as e:
-  st.error(f"Hata oluştu: {e}")
+  st.error(f"Hata oluştu: {e}")s
