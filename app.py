@@ -106,52 +106,27 @@ def load_and_process_data(url):
       None,
   )
 
-  # Sütunları isimlerine ve içeriklerine göre kesin tespit ediyoruz
-  for col in cols_list:
-    c = sanitize_name(col)
-    if c in ["id", "urun kodu", "urun_kodu"] and not id_col:
-      id_col = col
-    elif "stok" in c and not stok_col:
-      stok_col = col
-    elif "satis" in c and not satis_col:
-      satis_col = col
-    elif any(k in c for k in ["maliyet", "smm", "cost"]) and not maliyet_col:
-      maliyet_col = col
-    elif "ilk fiyat" in c or (
-        "ilk" in c and "fiyat" in c and not ilk_fiyat_col
-    ):
-      ilk_fiyat_col = col
-    elif "indirimli" in c and not indirimli_col:
-      indirimli_col = col
-    elif c in ["ciro", "tutar"] and not ciro_col:
-      ciro_col = col
-    elif any(k in c for k in ["oran", "indirim oran"]) and not indirim_oran_col:
-      indirim_oran_col = col
-
-  # Konum bazlı mutlak emniyet garantileri (Görselindeki sıralamaya tam uyumlu)
-  if not id_col and len(cols_list) > 1:
+  # E-tablo sıra indeksleri: 1:Id, 7:Satış, 8:Stok, 9:Ciro, 11:Maliyet, 12:İlk Fiyat, 13:İndirimli Fiyat, 14:İndirim Oranı
+  if len(cols_list) > 1:
     id_col = cols_list[1]
-  if not satis_col and len(cols_list) > 7:
+  if len(cols_list) > 7:
     satis_col = cols_list[7]
-  if not stok_col and len(cols_list) > 8:
+  if len(cols_list) > 8:
     stok_col = cols_list[8]
-  if not ciro_col and len(cols_list) > 9:
+  if len(cols_list) > 9:
     ciro_col = cols_list[9]
-  if not maliyet_col and len(cols_list) > 11:
-      maliyet_col = cols_list[11]
-  if not ilk_fiyat_col and len(cols_list) > 12:
+  if len(cols_list) > 11:
+    maliyet_col = cols_list[11]
+  if len(cols_list) > 12:
     ilk_fiyat_col = cols_list[12]
-  if not indirimli_col and len(cols_list) > 13:
+  if len(cols_list) > 13:
     indirimli_col = cols_list[13]
-  if not indirim_oran_col and len(cols_list) > 14:
+  if len(cols_list) > 14:
     indirim_oran_col = cols_list[14]
 
-  df["Stok_num"] = pd.to_numeric(
-      df[stok_col].astype(str).str.replace(",", "."), errors="coerce"
-  ).fillna(0)
-  df["Satis_num"] = pd.to_numeric(
-      df[satis_col].astype(str).str.replace(",", "."), errors="coerce"
-  ).fillna(0)
+  # Stok ve Satış değerlerini parse_money ile güvenle sayısal yapıyoruz
+  df["Stok_num"] = df[stok_col].apply(parse_money) if stok_col else 0.0
+  df["Satis_num"] = df[satis_col].apply(parse_money) if satis_col else 0.0
 
   df["Raw_Maliyet"] = df[maliyet_col] if maliyet_col else 0
   df["Raw_Ilk_Fiyat"] = df[ilk_fiyat_col] if ilk_fiyat_col else 0
@@ -190,13 +165,6 @@ def load_and_process_data(url):
         "Raw_Indirimli_Fiyat",
         "Raw_Ciro",
         "Raw_Indirim_Orani",
-        stok_col,
-        satis_col,
-        maliyet_col,
-        ilk_fiyat_col,
-        indirimli_col,
-        ciro_col,
-        indirim_oran_col,
     ]:
       agg_rules[col] = "first"
 
@@ -219,6 +187,7 @@ def load_and_process_data(url):
       df_grouped["Ciro_val"] > 0, df_grouped["Ciro_val"], calculated_ciro
   )
 
+  # WOS hesaplaması
   active_weeks = 1.0
   weekly_sales_rate = total_sales / active_weeks
   wos = np.where(
@@ -278,7 +247,6 @@ def load_and_process_data(url):
       0.0,
   )
 
-  # Sütunları doğru format fonksiyonlarıyla eşleştiriyoruz
   if ciro_col:
     df_grouped[ciro_col] = pd.Series(final_ciro_vals).apply(format_tl)
   if maliyet_col:
@@ -344,7 +312,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Tüm sütunlar, ciro ve oran formatları tamamen düzeltildi!")
+  st.success("Stok, satış ve kâr hesaplamaları başarıyla düzeltildi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
