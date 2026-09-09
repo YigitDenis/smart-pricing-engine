@@ -70,11 +70,9 @@ def load_and_process_data(url):
   if isinstance(df, pd.Series):
     df = df.to_frame().T
 
-  # Sütun adlarındaki tüm gizli boşlukları temizle
   df.columns = [str(c).strip().replace("\xa0", " ") for c in df.columns]
 
-  original_columns = [c for c in df.columns if sanitize_name(c) != "hafta"]
-
+  # Hafta kolonunu temizle
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
   else:
@@ -82,7 +80,10 @@ def load_and_process_data(url):
       if sanitize_name(c) == "hafta":
         df = df.drop(columns=[c])
 
-  stok_col, satis_col, maliyet_col, indirimli_col, ilk_fiyat_col, ciro_col, id_col = (
+  original_columns = list(df.columns)
+
+  # Sütunları isimlerine ve içeriklerine göre kesin olarak tespit et
+  id_col, stok_col, satis_col, maliyet_col, ilk_fiyat_col, indirimli_col, ciro_col = (
       None,
       None,
       None,
@@ -93,62 +94,55 @@ def load_and_process_data(url):
   )
 
   for col in df.columns:
-    c_clean = sanitize_name(col)
-    if c_clean in ["id", "urun kodu", "urun_kodu"] and not id_col:
+    c = sanitize_name(col)
+    if c in ["id", "urun kodu", "urun_kodu"] and not id_col:
       id_col = col
-    elif "stok" in c_clean and not stok_col:
+    elif "stok" in c and not stok_col:
       stok_col = col
-    elif "satis" in c_clean and not satis_col:
+    elif "satis" in c and not satis_col:
       satis_col = col
-    elif any(k in c_clean for k in ["maliyet", "smm", "cost"]) and not maliyet_col:
+    elif any(k in c for k in ["maliyet", "smm", "cost"]) and not maliyet_col:
       maliyet_col = col
-    elif "ilk" in c_clean and "fiyat" in c_clean and not ilk_fiyat_col:
+    elif "ilk" in c and not ilk_fiyat_col:
       ilk_fiyat_col = col
-    elif "indirimli" in c_clean and not indirimli_col:
+    elif any(k in c for k in ["indirimli", "psf", "fiyat"]) and not indirimli_col:
       indirimli_col = col
-    elif any(k in c_clean for k in ["ciro", "tutar"]) and not ciro_col:
+    elif any(k in c for k in ["ciro", "tutar"]) and not ciro_col:
       ciro_col = col
 
-  # İkincil geniş arama
-  if not id_col:
-    for col in df.columns:
-      c = sanitize_name(col)
-      if "id" in c or "kod" in c:
-        id_col = col
-        break
+  # İkincil güvenlik: Eğer kelimeyle bulunamadıysa sütun konumlarına göre tahmin et
+  cols_list = list(df.columns)
+  if not id_col and len(cols_list) > 1:
+    id_col = cols_list[1]
   if not stok_col:
-    for col in df.columns:
-      if "stok" in sanitize_name(col):
-        stok_col = col
+    for c in cols_list:
+      if "stok" in sanitize_name(c):
+        stok_col = c
         break
   if not satis_col:
-    for col in df.columns:
-      if "satis" in sanitize_name(col):
-        satis_col = col
+    for c in cols_list:
+      if "satis" in sanitize_name(c):
+        satis_col = c
         break
   if not maliyet_col:
-    for col in df.columns:
-      c = sanitize_name(col)
-      if "maliyet" in c or "smm" in c:
-        maliyet_col = col
+    for c in cols_list:
+      if "maliyet" in sanitize_name(c):
+        maliyet_col = c
         break
   if not ilk_fiyat_col:
-    for col in df.columns:
-      c = sanitize_name(col)
-      if "ilk" in c:
-        ilk_fiyat_col = col
+    for c in cols_list:
+      if "ilk" in sanitize_name(c):
+        ilk_fiyat_col = c
         break
   if not indirimli_col:
-    for col in df.columns:
-      c = sanitize_name(col)
-      if "indirimli" in c or "psf" in c:
-        indirimli_col = col
+    for c in cols_list:
+      if "indirimli" in sanitize_name(c) or "psf" in sanitize_name(c):
+        indirimli_col = c
         break
   if not ciro_col:
-    for col in df.columns:
-      c = sanitize_name(col)
-      if "ciro" in c or "tutar" in c:
-        ciro_col = col
+    for c in cols_list:
+      if "ciro" in sanitize_name(c):
+        ciro_col = c
         break
 
   df["Stok_num"] = clean_numeric(df[stok_col]) if stok_col else 0.0
@@ -169,7 +163,7 @@ def load_and_process_data(url):
 
   df["Ciro_num"] = clean_numeric(df[ciro_col]) if ciro_col else 0.0
 
-  group_col = id_col if id_col else df.columns[0]
+  group_col = id_col if id_col else cols_list[0]
 
   agg_rules = {
       "Stok_num": "last",
@@ -284,7 +278,7 @@ def load_and_process_data(url):
       0.0,
   )
 
-  # Değerleri orjinal sütun isimleriyle tabloya işliyoruz
+  # Değerleri güncel sütun adlarına işliyoruz
   if ciro_col and ciro_col in df_grouped.columns:
     df_grouped[ciro_col] = pd.Series(raw_ciro).apply(format_tl)
   else:
@@ -365,7 +359,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Tüm karakter ve boşluk uyumsuzlukları giderilerek veriler yüklendi!")
+  st.success("E-tablodaki güncel sütun yapısı ve fiyatlar başarıyla yüklendi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
