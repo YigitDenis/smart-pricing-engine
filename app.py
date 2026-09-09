@@ -109,46 +109,16 @@ def load_and_process_data(url):
 
   group_col = code_col if code_col else df.columns[0]
 
-  # Ürün Kodu bazlı kümüle gruplama (Stokları topla, satışları topla)
-  agg_rules = {
-      "Stok_num": "sum",
-      "Satis_num": "sum",
-      "Maliyet_num": "first",
-      "Fiyat_num": "first",
-  }
-  for col in df.columns:
-    if col not in [
-        group_col,
-        "Stok_num",
-        "Satis_num",
-        "Maliyet_num",
-        "Fiyat_num",
-        stok_col,
-        satis_col,
-        maliyet_col,
-        fiyat_col,
-    ]:
-      agg_rules[col] = "first"
+  # Ham veriyi koruyarak metrikleri ekliyoruz (Varyantları düşürmemek için doğrudan satır bazlı hesaplama)
+  df["Stok"] = df["Stok_num"]
+  df["Satış Adeti"] = df["Satis_num"]
+  df["Maliyet"] = df["Maliyet_num"]
+  df["İndirimli Fiyat"] = df["Fiyat_num"]
 
-  df_grouped = df.groupby(group_col, as_index=False).agg(agg_rules)
-
-  if isinstance(df_grouped, pd.Series):
-    df_grouped = df_grouped.to_frame().T
-
-  df_grouped["Stok"] = df_grouped["Stok_num"]
-  df_grouped["Satış Adeti"] = df_grouped["Satis_num"]
-  df_grouped["Maliyet"] = df_grouped["Maliyet_num"]
-  df_grouped["İndirimli Fiyat"] = df_grouped["Fiyat_num"]
-
-  df_grouped = df_grouped.drop(
-      columns=["Stok_num", "Satis_num", "Maliyet_num", "Fiyat_num"],
-      errors="ignore",
-  )
-
-  stock_qty = df_grouped["Stok"]
-  total_sales = df_grouped["Satış Adeti"]
-  cost = df_grouped["Maliyet"]
-  current_price = df_grouped["İndirimli Fiyat"]
+  stock_qty = df["Stok"]
+  total_sales = df["Satış Adeti"]
+  cost = df["Maliyet"]
+  current_price = df["İndirimli Fiyat"]
 
   active_weeks = 1.0
   weekly_sales_rate = total_sales / active_weeks
@@ -201,33 +171,32 @@ def load_and_process_data(url):
   )
   discount_rate = np.maximum(0.0, discount_rate)
 
-  df_grouped["Haftalık Satış Hızı"] = np.round(weekly_sales_rate, 2)
-  df_grouped["Stok Ömrü (WOS)"] = np.round(wos, 1)
-  df_grouped["Brüt Kâr (TL)"] = np.round(realized_profit, 2)
-  df_grouped["GMROI Verimliliği"] = np.round(gmroi, 2)
-  df_grouped["Önerilen Aksiyon"] = action
-  df_grouped["Aciliyet Seviyesi"] = urgency
-  df_grouped["Önerilen Yeni Fiyat (TL)"] = np.round(suggested_price, 2)
-  df_grouped["Önerilen İndirim (%)"] = discount_rate
+  df["Haftalık Satış Hızı"] = np.round(weekly_sales_rate, 2)
+  df["Stok Ömrü (WOS)"] = np.round(wos, 1)
+  df["Brüt Kâr (TL)"] = np.round(realized_profit, 2)
+  df["GMROI Verimliliği"] = np.round(gmroi, 2)
+  df["Önerilen Aksiyon"] = action
+  df["Aciliyet Seviyesi"] = urgency
+  df["Önerilen Yeni Fiyat (TL)"] = np.round(suggested_price, 2)
+  df["Önerilen İndirim (%)"] = discount_rate
 
-  return df_grouped, group_col
+  return df, group_col
 
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Veriler Ürün Kodu bazlı kümüle edildi!")
+  st.success("Veriler başarıyla yüklendi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
-  selected_code = "Tümü"
-  if group_col and group_col in df_result.columns:
-    unique_codes = df_result[group_col].dropna().unique().tolist()
-    selected_code = st.sidebar.selectbox(
-        "Stok Kodu Seçin", ["Tümü"] + [str(x) for x in unique_codes]
-    )
 
-  if selected_code != "Tümü":
+  # Metin arama kutusu (Örn: 821 yazdığında içinde 821 geçen tüm renk ve varyantlar gelsin)
+  search_query = st.sidebar.text_input(
+      "Stok Kodu Ara (Örn: 821)", value=""
+  ).strip()
+
+  if search_query:
     df_filtered = df_result[
-        df_result[group_col].astype(str) == str(selected_code)
+        df_result[group_col].astype(str).str.contains(search_query, case=False, na=False)
     ].copy()
   else:
     df_filtered = df_result.copy()
@@ -235,7 +204,7 @@ try:
   df_filtered = df_filtered.reset_index(drop=True)
 
   col1, col2, col3, col4 = st.columns(4)
-  col1.metric("Toplam Model / Stok Kodu", len(df_filtered))
+  col1.metric("Toplam Varyant / Kayıt", len(df_filtered))
   col2.metric(
       "Toplam Stok",
       int(df_filtered["Stok"].sum()) if "Stok" in df_filtered.columns else 0,
@@ -260,7 +229,7 @@ try:
   col4.metric("Kırmızı Alarm", alarm_count)
 
   st.markdown("---")
-  st.subheader("Ürün Kodu Bazlı Kümüle Fiyat ve Karar Analizi Raporu")
+  st.subheader("Ürün ve Renk Bazlı Fiyat Analizi Raporu")
 
   st.dataframe(df_filtered, use_container_width=True)
 
@@ -278,7 +247,7 @@ try:
   st.download_button(
       label="📥 Net Raporu Excel Olarak İndir",
       data=excel_data,
-      file_name="stok_kodu_bazli_fiyat_raporu.xlsx",
+      file_name="stok_kodu_arama_raporu.xlsx",
       mime=(
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       ),
