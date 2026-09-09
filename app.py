@@ -38,26 +38,40 @@ def load_and_process_data(url):
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
 
-  # Sütunları tam adlarıyla veya esnek eşleştirme ile bul
-  stok_col, satis_col, maliyet_col, fiyat_col, id_col = None, None, None, None, None
+  # Sütun tespiti
+  stok_col, satis_col, maliyet_col, fiyat_col, filter_target_col = (
+      None,
+      None,
+      None,
+      None,
+      None,
+  )
 
   for col in df.columns:
     col_lower = col.lower()
-    if col_lower == "id" and not id_col:
-      id_col = col
+    if (
+        "ürün kodu" in col_lower
+        or "urun kodu" in col_lower
+        and not filter_target_col
+    ):
+      filter_target_col = col
     elif "stok" in col_lower and not stok_col:
       stok_col = col
     elif ("satış adeti" in col_lower or "satis adeti" in col_lower) and not satis_col:
       satis_col = col
-    elif ("maliyet" in col_lower or "smm" in col_lower or "cost" in col_lower) and not maliyet_col:
+    elif (
+        "maliyet" in col_lower or "smm" in col_lower or "cost" in col_lower
+    ) and not maliyet_col:
       maliyet_col = col
-    elif ("indirimli fiy" in col_lower or "indirimli" in col_lower or "psf" in col_lower) and not fiyat_col:
+    elif (
+        "indirimli" in col_lower or "psf" in col_lower or "fiyat" in col_lower
+    ) and not fiyat_col:
       fiyat_col = col
 
-  if not id_col:
+  if not filter_target_col:
     for col in df.columns:
       if "id" in col.lower():
-        id_col = col
+        filter_target_col = col
         break
 
   df["Stok_num"] = clean_numeric(df[stok_col]) if stok_col else 0.0
@@ -65,30 +79,30 @@ def load_and_process_data(url):
   df["Maliyet_num"] = clean_numeric(df[maliyet_col]) if maliyet_col else 0.0
   df["Fiyat_num"] = clean_numeric(df[fiyat_col]) if fiyat_col else 0.0
 
-  if id_col:
-    agg_rules = {
-        "Stok_num": "last",
-        "Satis_num": "sum",
-        "Maliyet_num": "first",
-        "Fiyat_num": "first",
-    }
-    for col in df.columns:
-      if col not in [
-          id_col,
-          "Stok_num",
-          "Satis_num",
-          "Maliyet_num",
-          "Fiyat_num",
-          stok_col,
-          satis_col,
-          maliyet_col,
-          fiyat_col,
-      ]:
-        agg_rules[col] = "first"
+  # Id veya Ürün Kodu bazlı kümüle gruplama
+  group_col = filter_target_col if filter_target_col else df.columns[0]
 
-    df_grouped = df.groupby(id_col, as_index=False).agg(agg_rules)
-  else:
-    df_grouped = df
+  agg_rules = {
+      "Stok_num": "last",
+      "Satis_num": "sum",
+      "Maliyet_num": "first",
+      "Fiyat_num": "first",
+  }
+  for col in df.columns:
+    if col not in [
+        group_col,
+        "Stok_num",
+        "Satis_num",
+        "Maliyet_num",
+        "Fiyat_num",
+        stok_col,
+        satis_col,
+        maliyet_col,
+        fiyat_col,
+    ]:
+      agg_rules[col] = "first"
+
+  df_grouped = df.groupby(group_col, as_index=False).agg(agg_rules)
 
   if isinstance(df_grouped, pd.Series):
     df_grouped = df_grouped.to_frame().T
@@ -102,11 +116,6 @@ def load_and_process_data(url):
       columns=["Stok_num", "Satis_num", "Maliyet_num", "Fiyat_num"],
       errors="ignore",
   )
-
-  # Eğer Id sütunu varsa en başa taşı
-  if id_col and id_col in df_grouped.columns:
-    cols = [id_col] + [c for c in df_grouped.columns if c != id_col]
-    df_grouped = df_grouped[cols]
 
   stock_qty = df_grouped["Stok"]
   total_sales = df_grouped["Satış Adeti"]
@@ -173,32 +182,24 @@ def load_and_process_data(url):
   df_grouped["Önerilen Yeni Fiyat (TL)"] = np.round(suggested_price, 2)
   df_grouped["Önerilen İndirim (%)"] = discount_rate
 
-  return df_grouped
+  return df_grouped, group_col
 
 
 try:
-  df_result = load_and_process_data(SHEET_URL)
-  st.success("Veriler Id bazlı kümüle edildi ve başarıyla yüklendi!")
+  df_result, group_col = load_and_process_data(SHEET_URL)
+  st.success("Veriler başarıyla yüklendi ve kümüle edildi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
-  filter_col = None
-  for col in df_result.columns:
-    if col.lower() == "id":
-      filter_col = col
-      break
-  if not filter_col and len(df_result.columns) > 0:
-    filter_col = df_result.columns[0]
-
   selected_code = "Tümü"
-  if filter_col and filter_col in df_result.columns:
-    unique_codes = df_result[filter_col].dropna().unique().tolist()
+  if group_col and group_col in df_result.columns:
+    unique_codes = df_result[group_col].dropna().unique().tolist()
     selected_code = st.sidebar.selectbox(
-        f"{filter_col} Seçin", ["Tümü"] + [str(x) for x in unique_codes]
+        f"{group_col} Seçin", ["Tümü"] + [str(x) for x in unique_codes]
     )
 
   if selected_code != "Tümü":
     df_filtered = df_result[
-        df_result[filter_col].astype(str) == str(selected_code)
+        df_result[group_col].astype(str) == str(selected_code)
     ].copy()
   else:
     df_filtered = df_result.copy()
@@ -206,7 +207,7 @@ try:
   df_filtered = df_filtered.reset_index(drop=True)
 
   col1, col2, col3, col4 = st.columns(4)
-  col1.metric("Toplam Çeşit / Id", len(df_filtered))
+  col1.metric("Toplam Çeşit / Kayıt", len(df_filtered))
   col2.metric(
       "Toplam Stok",
       int(df_filtered["Stok"].sum()) if "Stok" in df_filtered.columns else 0,
