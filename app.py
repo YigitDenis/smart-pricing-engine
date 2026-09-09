@@ -21,6 +21,20 @@ def format_tl(val):
     return "0,00 TL"
 
 
+def format_percentage(val):
+  try:
+    val = float(val)
+    # Eğer değer 0-1 arasındaysa (örn: 0.48), yüzdeye çevirip formatla
+    if 0 <= val <= 1:
+      val = val * 100
+    return (
+        "%"
+        + f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    )
+  except:
+    return "%0,00"
+
+
 def clean_numeric(series):
   if series is None:
     return 0.0
@@ -72,7 +86,6 @@ def load_and_process_data(url):
 
   df.columns = [str(c).strip().replace("\xa0", " ") for c in df.columns]
 
-  # Hafta kolonunu temizle
   if "Hafta" in df.columns:
     df = df.drop(columns=["Hafta"])
   else:
@@ -82,8 +95,8 @@ def load_and_process_data(url):
 
   original_columns = list(df.columns)
 
-  # Sütunları isimlerine ve içeriklerine göre kesin olarak tespit et
-  id_col, stok_col, satis_col, maliyet_col, ilk_fiyat_col, indirimli_col, ciro_col = (
+  id_col, stok_col, satis_col, maliyet_col, ilk_fiyat_col, indirimli_col, ciro_col, indirim_oran_col = (
+      None,
       None,
       None,
       None,
@@ -105,12 +118,13 @@ def load_and_process_data(url):
       maliyet_col = col
     elif "ilk" in c and not ilk_fiyat_col:
       ilk_fiyat_col = col
-    elif any(k in c for k in ["indirimli", "psf", "fiyat"]) and not indirimli_col:
+    elif "indirimli fiyat" in c and not indirimli_col:
       indirimli_col = col
     elif any(k in c for k in ["ciro", "tutar"]) and not ciro_col:
       ciro_col = col
+    elif any(k in c for k in ["oran", "indirim oran"]) and not indirim_oran_col:
+      indirim_oran_col = col
 
-  # İkincil güvenlik: Eğer kelimeyle bulunamadıysa sütun konumlarına göre tahmin et
   cols_list = list(df.columns)
   if not id_col and len(cols_list) > 1:
     id_col = cols_list[1]
@@ -144,6 +158,11 @@ def load_and_process_data(url):
       if "ciro" in sanitize_name(c):
         ciro_col = c
         break
+  if not indirim_oran_col:
+    for c in cols_list:
+      if "oran" in sanitize_name(c):
+        indirim_oran_col = c
+        break
 
   df["Stok_num"] = clean_numeric(df[stok_col]) if stok_col else 0.0
   df["Satis_num"] = clean_numeric(df[satis_col]) if satis_col else 0.0
@@ -162,6 +181,9 @@ def load_and_process_data(url):
   )
 
   df["Ciro_num"] = clean_numeric(df[ciro_col]) if ciro_col else 0.0
+  df["Indirim_Oran_num"] = (
+      clean_numeric(df[indirim_oran_col]) if indirim_oran_col else 0.0
+  )
 
   group_col = id_col if id_col else cols_list[0]
 
@@ -172,6 +194,7 @@ def load_and_process_data(url):
       "Ilk_Fiyat_num": "first",
       "Indirimli_Fiyat_num": "first",
       "Ciro_num": "sum",
+      "Indirim_Oran_num": "first",
   }
   for col in df.columns:
     if col not in [
@@ -182,12 +205,14 @@ def load_and_process_data(url):
         "Ilk_Fiyat_num",
         "Indirimli_Fiyat_num",
         "Ciro_num",
+        "Indirim_Oran_num",
         stok_col,
         satis_col,
         maliyet_col,
         ilk_fiyat_col,
         indirimli_col,
         ciro_col,
+        indirim_oran_col,
     ]:
       agg_rules[col] = "first"
 
@@ -209,10 +234,15 @@ def load_and_process_data(url):
       df_grouped["Ciro_num"] > 0, df_grouped["Ciro_num"], calculated_ciro
   )
 
-  raw_discount = np.where(
+  # Eğer tabloda oran yoksa veya 0 ise hesapla, varsa onu kullan
+  tablodaki_oran = df_grouped["Indirim_Oran_num"]
+  hesaplanan_oran = np.where(
       raw_first_price > 0,
-      (1 - (raw_current_price / raw_first_price)) * 100,
+      1 - (raw_current_price / raw_first_price),
       0.0,
+  )
+  final_oran = np.where(
+      tablodaki_oran > 0, tablodaki_oran, hesaplanan_oran
   )
 
   stock_qty = df_grouped["Stok"]
@@ -278,7 +308,7 @@ def load_and_process_data(url):
       0.0,
   )
 
-  # Değerleri güncel sütun adlarına işliyoruz
+  # Değerleri ve yüzdelik formatları işliyoruz
   if ciro_col and ciro_col in df_grouped.columns:
     df_grouped[ciro_col] = pd.Series(raw_ciro).apply(format_tl)
   else:
@@ -299,16 +329,10 @@ def load_and_process_data(url):
   else:
     df_grouped["İndirimli Fiyat"] = raw_current_price.apply(format_tl)
 
-  discount_col_name = "İndirim Oranı"
-  for col in original_columns:
-    if "oran" in sanitize_name(col) or "indirim" in sanitize_name(col):
-      if col != indirimli_col:
-        discount_col_name = col
-        break
-
-  df_grouped[discount_col_name] = (
-      np.round(np.maximum(0.0, raw_discount), 2).astype(str) + "%"
-  )
+  if indirim_oran_col and indirim_oran_col in df_grouped.columns:
+    df_grouped[indirim_oran_col] = pd.Series(final_oran).apply(format_percentage)
+  else:
+    df_grouped["İndirim Oranı"] = pd.Series(final_oran).apply(format_percentage)
 
   df_grouped["Haftalık Satış Hızı"] = np.round(weekly_sales_rate, 2)
   df_grouped["Stok Ömrü (WOS)"] = np.round(wos, 1)
@@ -329,6 +353,7 @@ def load_and_process_data(url):
           "Ilk_Fiyat_num",
           "Indirimli_Fiyat_num",
           "Ciro_num",
+          "Indirim_Oran_num",
       ],
       errors="ignore",
   )
@@ -359,7 +384,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("E-tablodaki güncel sütun yapısı ve fiyatlar başarıyla yüklendi!")
+  st.success("İndirim oranları yüzdelik formata (%48,00 vb.) dönüştürüldü!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
