@@ -45,11 +45,8 @@ def format_tl(val):
 
 def format_percentage(val):
   try:
-    if pd.isna(val) or str(val).strip() == "" or str(val).strip() == "nan":
-      return "%0,00"
-    val_str = str(val).replace("%", "").strip().replace(",", ".")
-    f_val = float(val_str)
-    if 0 < f_val <= 1:
+    f_val = parse_money(val)
+    if 0 <= f_val <= 1:
       f_val = f_val * 100
     return (
         "%"
@@ -109,26 +106,46 @@ def load_and_process_data(url):
       None,
   )
 
-  # Sütunları pozisyonlarına (indislerine) göre kilitliyoruz (Görselindeki sıralama esastır)
-  # A: Hafta(silindi), B: Id, C: Ana Kategori, D: Ürün Kodu, E: Ürün Adı, F: Renk Kodu, G: Renk Açıklaması, H: Satış Adeti, I: Stok, J: Ciro, K: Ürün Açıklama, L: Maliyet, M: İlk Fiyat, N: İndirimli Fiyat, O: İndirim Oranı
-  if len(cols_list) > 1:
-    id_col = cols_list[1]
-  if len(cols_list) > 7:
-    satis_col = cols_list[7]  # H sütunu Satış Adeti
-  if len(cols_list) > 8:
-    stok_col = cols_list[8]  # I sütunu Stok
-  if len(cols_list) > 9:
-    ciro_col = cols_list[9]  # J sütunu Ciro
-  if len(cols_list) > 11:
-    maliyet_col = cols_list[11]  # L sütunu Maliyet
-  if len(cols_list) > 12:
-    ilk_fiyat_col = cols_list[12]  # M sütunu İlk Fiyat
-  if len(cols_list) > 13:
-    indirimli_col = cols_list[13]  # N sütunu İndirimli Fiyat
-  if len(cols_list) > 14:
-    indirim_oran_col = cols_list[14]  # O sütunu İndirim Oranı
+  # Sütunları isimlerine ve içeriklerine göre kesin tespit ediyoruz
+  for col in cols_list:
+    c = sanitize_name(col)
+    if c in ["id", "urun kodu", "urun_kodu"] and not id_col:
+      id_col = col
+    elif "stok" in c and not stok_col:
+      stok_col = col
+    elif "satis" in c and not satis_col:
+      satis_col = col
+    elif any(k in c for k in ["maliyet", "smm", "cost"]) and not maliyet_col:
+      maliyet_col = col
+    elif "ilk fiyat" in c or (
+        "ilk" in c and "fiyat" in c and not ilk_fiyat_col
+    ):
+      ilk_fiyat_col = col
+    elif "indirimli" in c and not indirimli_col:
+      indirimli_col = col
+    elif c in ["ciro", "tutar"] and not ciro_col:
+      ciro_col = col
+    elif any(k in c for k in ["oran", "indirim oran"]) and not indirim_oran_col:
+      indirim_oran_col = col
 
-  # Ham verileri doğrudan ilgili sütun indekslerinden alıyoruz
+  # Konum bazlı mutlak emniyet garantileri (Görselindeki sıralamaya tam uyumlu)
+  if not id_col and len(cols_list) > 1:
+    id_col = cols_list[1]
+  if not satis_col and len(cols_list) > 7:
+    satis_col = cols_list[7]
+  if not stok_col and len(cols_list) > 8:
+    stok_col = cols_list[8]
+  if not ciro_col and len(cols_list) > 9:
+    ciro_col = cols_list[9]
+  if not maliyet_col and len(cols_list) > 11:
+      maliyet_col = cols_list[11]
+  if not ilk_fiyat_col and len(cols_list) > 12:
+    ilk_fiyat_col = cols_list[12]
+  if not indirimli_col and len(cols_list) > 13:
+    indirimli_col = cols_list[13]
+  if not indirim_oran_col and len(cols_list) > 14:
+    indirim_oran_col = cols_list[14]
+
   df["Stok_num"] = pd.to_numeric(
       df[stok_col].astype(str).str.replace(",", "."), errors="coerce"
   ).fillna(0)
@@ -173,6 +190,13 @@ def load_and_process_data(url):
         "Raw_Indirimli_Fiyat",
         "Raw_Ciro",
         "Raw_Indirim_Orani",
+        stok_col,
+        satis_col,
+        maliyet_col,
+        ilk_fiyat_col,
+        indirimli_col,
+        ciro_col,
+        indirim_oran_col,
     ]:
       agg_rules[col] = "first"
 
@@ -254,7 +278,7 @@ def load_and_process_data(url):
       0.0,
   )
 
-  # Değerleri ve formatları doğru sütunlara yazıyoruz
+  # Sütunları doğru format fonksiyonlarıyla eşleştiriyoruz
   if ciro_col:
     df_grouped[ciro_col] = pd.Series(final_ciro_vals).apply(format_tl)
   if maliyet_col:
@@ -320,7 +344,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("Tüm sütunlar ve fiyatlar e-tablo sırasına göre sabitlendi!")
+  st.success("Tüm sütunlar, ciro ve oran formatları tamamen düzeltildi!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
