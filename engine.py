@@ -1,20 +1,25 @@
 import pandas as pd
 
+def clean_numeric(val):
+    if pd.isna(val):
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    # Virgülü noktaya çevir, binlik ayracı noktaları temizle
+    val_str = str(val).strip().replace('.', '').replace(',', '.')
+    try:
+        return float(val_str)
+    except:
+        return 0.0
+
 def calculate_smart_pricing(row):
-    """
-    Maliyet, stok, satış ve fiyat sütunlarını esnek bir şekilde okuyarak 
-    akıllı indirim veya fiyat artış kararı veren motor.
-    """
-    # Sütun adlarındaki olası farklılıklar için güvenli okuma (fallback)
-    cost = float(row.get('Maliyet', row.get('Cost', 0)) or 0)
-    current_price = float(row.get('Mevcut Fiyat', row.get('İlk Fiyat', row.get('Fiyat', 0))) or 0)
-    stock_qty = float(row.get('Stok', row.get('Stok Adedi', 0)) or 0)
-    weekly_sales = float(row.get('Satış Adeti', row.get('Haftalık Satış', 0)) or 0)
+    cost = clean_numeric(row.get('Maliyet', row.get('Cost', 0)))
+    current_price = clean_numeric(row.get('İndirimli Fiyat', row.get('Mevcut Fiyat', row.get('İlk Fiyat', 0))))
+    stock_qty = clean_numeric(row.get('Stok', row.get('Stok Adedi', 0)))
+    weekly_sales = clean_numeric(row.get('Satış Adeti', row.get('Haftalık Satış', 0)))
     
-    # Mutlak Taban Sınır (Stop-Loss): Mark-up en az 1.2 olmalı
     min_allowable_price = cost * 1.20
     
-    # Stok Ömrü (WOS) hesaplama
     if weekly_sales == 0:
         wos = 99.0
     else:
@@ -24,7 +29,6 @@ def calculate_smart_pricing(row):
     suggested_price = current_price
     urgency = "Normal"
     
-    # Karar Mekanizması
     if wos < 2 and weekly_sales > 2:
         action = "Fiyat Artır / Koru"
         suggested_price = current_price
@@ -38,7 +42,6 @@ def calculate_smart_pricing(row):
         suggested_price = current_price * 0.70
         urgency = "Yüksek"
 
-    # Stop-Loss Kontrolü
     if suggested_price < min_allowable_price:
         suggested_price = min_allowable_price
         urgency = "Kırmızı Alarm (Taban Fiyat)"
