@@ -21,26 +21,6 @@ def format_tl(val):
     return "0,00 TL"
 
 
-def normalize_text(text):
-  return (
-      str(text)
-      .lower()
-      .replace("İ", "i")
-      .replace("ı", "i")
-      .replace("Ş", "s")
-      .replace("ş", "s")
-      .replace("Ğ", "g")
-      .replace("ğ", "g")
-      .replace("Ü", "u")
-      .replace("ü", "u")
-      .replace("Ö", "o")
-      .replace("ö", "o")
-      .replace("Ç", "c")
-      .replace("ç", "c")
-      .strip()
-  )
-
-
 def clean_numeric(series):
   if series is None:
     return 0.0
@@ -83,55 +63,45 @@ def load_and_process_data(url):
       None,
   )
 
+  # Sütunları esnek kelime eşleştirmesiyle buluyoruz
   for col in df.columns:
-    norm = normalize_text(col)
-    if norm in ["id", "urun kodu", "urun_kodu"] and not id_col:
+    col_lower = (
+        col.lower()
+        .replace("İ", "i")
+        .replace("ı", "i")
+        .replace("Ş", "s")
+        .replace("ş", "s")
+    )
+    if col_lower in ["id", "urun kodu", "urun_kodu"] and not id_col:
       id_col = col
-    elif "stok" in norm and not stok_col:
+    elif "stok" in col_lower and not stok_col:
       stok_col = col
-    elif "satis" in norm and not satis_col:
+    elif "satis" in col_lower and not satis_col:
       satis_col = col
-    elif any(k in norm for k in ["maliyet", "smm", "cost"]) and not maliyet_col:
+    elif any(k in col_lower for k in ["maliyet", "smm", "cost"]) and not maliyet_col:
       maliyet_col = col
-    elif "ilk fiyat" in norm or (
-        "ilk" in norm and "fiyat" in norm and not ilk_fiyat_col
-    ):
+    elif "ilk" in col_lower and not ilk_fiyat_col:
       ilk_fiyat_col = col
-    elif "indirimli fiyat" in norm or "indirimli" in norm or "psf" in norm:
+    elif "indirimli" in col_lower and not indirimli_fiyat_col:
       indirimli_fiyat_col = col
-    elif any(k in norm for k in ["ciro", "tutar"]) and not ciro_col:
+    elif any(k in col_lower for k in ["ciro", "tutar"]) and not ciro_col:
       ciro_col = col
 
-  if not id_col:
-    for col in df.columns:
-      if "id" in normalize_text(col) or "kod" in normalize_text(col):
-        id_col = col
-        break
-  if not stok_col:
-    for col in df.columns:
-      if "stok" in normalize_text(col):
-        stok_col = col
-        break
-  if not satis_col:
-    for col in df.columns:
-      if "satis" in normalize_text(col):
-        satis_col = col
-        break
-  if not maliyet_col:
-    for col in df.columns:
-      if "maliyet" in normalize_text(col) or "smm" in normalize_text(col):
-        maliyet_col = col
-        break
-  if not ilk_fiyat_col:
-    for col in df.columns:
-      if "ilk" in normalize_text(col):
-        ilk_fiyat_col = col
-        break
-  if not indirimli_fiyat_col:
-    for col in df.columns:
-      if "indirimli" in normalize_text(col) or "psf" in normalize_text(col):
-        indirimli_fiyat_col = col
-        break
+  # Eğer yukarıda bulunamadıysa genel arama yap
+  for col in df.columns:
+    c = col.lower()
+    if not id_col and ("id" in c or "kod" in c):
+      id_col = col
+    if not stok_col and "stok" in c:
+      stok_col = col
+    if not satis_col and "satis" in c:
+      satis_col = col
+    if not maliyet_col and ("maliyet" in c or "smm" in c):
+      maliyet_col = col
+    if not ilk_fiyat_col and "ilk" in c:
+      ilk_fiyat_col = col
+    if not indirimli_fiyat_col and ("indirimli" in c or "psf" in c):
+      indirimli_fiyat_col = col
 
   df["Stok_num"] = clean_numeric(df[stok_col]) if stok_col else 0.0
   df["Satis_num"] = clean_numeric(df[satis_col]) if satis_col else 0.0
@@ -140,12 +110,10 @@ def load_and_process_data(url):
       clean_numeric(df[ilk_fiyat_col]) if ilk_fiyat_col else 0.0
   )
   df["Indirimli_Fiyat_num"] = (
-      clean_numeric(df[indirimli_fiyat_col])
-      if indirimli_fiyat_col
-      else df["Ilk_Fiyat_num"]
+      clean_numeric(df[indirimli_fiyat_col]) if indirimli_fiyat_col else 0.0
   )
 
-  # Eksik kalan fiyatları birbirine tamamlama
+  # Fiyatlar eksikse birbirine tamamlama
   df["Ilk_Fiyat_num"] = np.where(
       df["Ilk_Fiyat_num"] == 0, df["Indirimli_Fiyat_num"], df["Ilk_Fiyat_num"]
   )
@@ -339,7 +307,7 @@ def load_and_process_data(url):
 
 try:
   df_result, group_col = load_and_process_data(SHEET_URL)
-  st.success("İlk fiyat ve indirimli fiyat sütunları başarıyla ayrıştırıldı!")
+  st.success("Fiyat sütunları başarıyla bağlandı!")
 
   st.sidebar.subheader("Filtreleme Paneli")
   search_query = st.sidebar.text_input(
