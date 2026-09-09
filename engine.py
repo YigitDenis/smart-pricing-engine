@@ -244,6 +244,7 @@ try:
         renk = str(first_row.get('Renk_Aciklamasi', '')).strip()
         ana_kat = str(first_row.get('Anakategori', 'Diğer')).strip()
         
+        # Deniz Açıklama (Orijinal tablodan gelen kullanıcı açıklaması)
         deniz_aciklama = str(last_row.get('Urun_Aciklama', '')).strip()
         if deniz_aciklama == 'nan':
             deniz_aciklama = ""
@@ -287,8 +288,9 @@ try:
         
         production_lead_time = 4
         buffer_stock_weeks = 4
-        target_total_weeks = production_lead_time + buffer_stock_weeks
+        target_total_weeks = production_lead_time + buffer_stock_weeks # 8 Hafta
         
+        # 4 Hafta Alarm Eşiği Kuralı
         if is_closed_season:
             rpt_karari = "Sezonu Kapandı - RPT Yok 🛑"
             onerilen_rpt_adeti = 0
@@ -425,13 +427,13 @@ try:
     global_obf = round(tot_ciro / tot_satis, 2) if tot_satis > 0 else 0.0
     
     c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-    c1.metric("Satış", format_tr_int(tot_satis))
-    c2.metric("Ciro", f"{format_tr_float(tot_ciro)} TL")
+    c1.metric("Haftalık Satış", format_tr_int(tot_satis))
+    c2.metric("Haftalık Ciro", f"{format_tr_float(tot_ciro)} TL")
     c3.metric("Genel OBF", f"{format_tr_float(global_obf)} TL")
     c4.metric("Satış Kaybı Adet", format_tr_int(tot_lost_sales))
     c5.metric("Satış Kaybı Tutarı", f"{format_tr_float(tot_lost_amount)} TL")
     c6.metric("Genel ST %", f"%{global_st}")
-    c7.metric("Stok", format_tr_int(tot_stok))
+    c7.metric("Haftalık Stok", format_tr_int(tot_stok))
     
     st.divider()
 
